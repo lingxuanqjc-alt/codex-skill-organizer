@@ -21,7 +21,9 @@ internal sealed record InstallLayout(
         var directory = new DirectoryInfo(Path.GetFullPath(baseDirectory));
         for (var depth = 0; depth <= MaximumParentDepth && directory is not null; depth++, directory = directory.Parent)
         {
-            var installRoot = directory.FullName;
+            // AppContext.BaseDirectory ends with a separator. Keep one canonical
+            // directory spelling in the runtime descriptor and boundary checks.
+            var installRoot = Path.TrimEndingDirectorySeparator(directory.FullName);
             var serverPath = FirstExisting(
                 fileExists,
                 Path.Combine(installRoot, "app", "dist", "server.mjs"),

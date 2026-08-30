@@ -85,8 +85,10 @@ function Get-InstalledServiceDiagnostic(
             ([string]$descriptor.protocolVersion).StartsWith('2.', [StringComparison]::Ordinal)
         try {
             $installRootMatches = $installRootMatches -and
-                [IO.Path]::GetFullPath([string]$descriptor.installRoot).Equals(
-                    [IO.Path]::GetFullPath($installedVersionRoot),
+                [IO.Path]::TrimEndingDirectorySeparator(
+                    [IO.Path]::GetFullPath([string]$descriptor.installRoot)).Equals(
+                    [IO.Path]::TrimEndingDirectorySeparator(
+                        [IO.Path]::GetFullPath($installedVersionRoot)),
                     [StringComparison]::OrdinalIgnoreCase)
         }
         catch {
@@ -188,6 +190,7 @@ function Get-InstalledServiceDiagnostic(
         ExpectedNodeContainsTilde = $expectedNodeContainsTilde
         ProcessPathContainsTilde = $processPathContainsTilde
         ProcessHashMatches = $processHashMatches
+        ProcessIds = @($validDescriptors | ForEach-Object { [int]$_.pid })
     }
 }
 
@@ -195,9 +198,38 @@ function Write-InstalledServiceDiagnostic([string]$phase, [object]$diagnostic) {
     Write-Host "INSTALLED-SERVICE-DIAGNOSTIC: phase=$phase descriptorFiles=$($diagnostic.DescriptorFileCount) parsed=$($diagnostic.ParsedDescriptorCount) valid=$($diagnostic.ValidDescriptorCount) descriptorReadFailed=$($diagnostic.DescriptorReadFailed) boundaryValid=$($diagnostic.BoundaryValid) versionMatches=$($diagnostic.VersionMatches) protocolCompatible=$($diagnostic.ProtocolCompatible) installRootMatches=$($diagnostic.InstallRootMatches) expectedNodeExists=$($diagnostic.ExpectedNodeExists) pidAlive=$($diagnostic.PidAlive) processPathReadable=$($diagnostic.ProcessPathReadable) processInspectionFailed=$($diagnostic.ProcessInspectionFailed) lexicalPathMatches=$($diagnostic.LexicalPathMatches) hashReadFailed=$($diagnostic.HashReadFailed) expectedContainsTilde=$($diagnostic.ExpectedNodeContainsTilde) processContainsTilde=$($diagnostic.ProcessPathContainsTilde) hashMatches=$($diagnostic.ProcessHashMatches)"
 }
 
-Write-InstalledServiceDiagnostic 'before' (
-    Get-InstalledServiceDiagnostic $DataRoot $VersionRoot $ExpectedVersion
-)
+function Test-ObservedProcessesExited([int[]]$processIds) {
+    foreach ($processId in $processIds) {
+        $observedProcess = $null
+        $observedProcessExited = $false
+        $observedProcessDisposeFailed = $false
+        try {
+            $observedProcess = [Diagnostics.Process]::GetProcessById($processId)
+            $observedProcessExited = $observedProcess.HasExited
+        }
+        catch [ArgumentException] {
+            # The exact observed process no longer exists.
+            $observedProcessExited = $true
+        }
+        catch {
+            return $false
+        }
+        finally {
+            if ($null -ne $observedProcess) {
+                try { $observedProcess.Dispose() }
+                catch { $observedProcessDisposeFailed = $true }
+            }
+        }
+        if ($observedProcessDisposeFailed -or -not $observedProcessExited) {
+            return $false
+        }
+    }
+    return $true
+}
+
+$beforeShutdownDiagnostic = Get-InstalledServiceDiagnostic $DataRoot $VersionRoot $ExpectedVersion
+Write-InstalledServiceDiagnostic 'before' $beforeShutdownDiagnostic
+$observedProcessIds = @($beforeShutdownDiagnostic.ProcessIds)
 $shutdownErrorPath = Join-Path $env:RUNNER_TEMP "cso-maintenance-shutdown-$([Guid]::NewGuid().ToString('N')).stderr"
 $shutdownProcess = $null
 $shutdownTimedOut = $false
@@ -246,10 +278,15 @@ finally {
     Remove-Item -LiteralPath $shutdownErrorPath -Force -ErrorAction SilentlyContinue
 }
 
+$afterShutdownDiagnostic = Get-InstalledServiceDiagnostic $DataRoot $VersionRoot $ExpectedVersion
+$observedProcessesExited = Test-ObservedProcessesExited $observedProcessIds
+$descriptorFilesRemoved = $afterShutdownDiagnostic.DescriptorFileCount -eq 0
 $shutdownStage = if ($shutdownControlFailed) {
     'process-control'
 } elseif ($shutdownTimedOut) {
     'timeout'
+} elseif ($shutdownExitCode -eq 0 -and (-not $observedProcessesExited -or -not $descriptorFilesRemoved)) {
+    'verification'
 } elseif ($shutdownExitCode -eq 1) {
     'maintenance'
 } elseif ($shutdownExitCode -eq 2) {
@@ -261,6 +298,10 @@ $shutdownCategory = if ($shutdownControlFailed) {
     'process-control-failed'
 } elseif ($shutdownTimedOut) {
     'timeout'
+} elseif ($shutdownExitCode -eq 0 -and -not $observedProcessesExited) {
+    'process-still-running'
+} elseif ($shutdownExitCode -eq 0 -and -not $descriptorFilesRemoved) {
+    'descriptor-still-present'
 } elseif ($shutdownExitCode -eq 0) {
     'success'
 } elseif ($shutdownErrorReadFailed) {
@@ -279,6 +320,7 @@ $shutdownCategory = if ($shutdownControlFailed) {
 $safeShutdownStage = switch ([string]$shutdownStage) {
     'process-control' { 'process-control' }
     'timeout' { 'timeout' }
+    'verification' { 'verification' }
     'maintenance' { 'maintenance' }
     'stable-forwarding' { 'stable-forwarding' }
     default { 'unexpected' }
@@ -286,6 +328,8 @@ $safeShutdownStage = switch ([string]$shutdownStage) {
 $safeShutdownCategory = switch ([string]$shutdownCategory) {
     'process-control-failed' { 'process-control-failed' }
     'timeout' { 'timeout' }
+    'process-still-running' { 'process-still-running' }
+    'descriptor-still-present' { 'descriptor-still-present' }
     'success' { 'success' }
     'stderr-read-failed' { 'stderr-read-failed' }
     'no-stderr' { 'no-stderr' }
@@ -301,8 +345,8 @@ $safeShutdownExitCode = if ($shutdownExitCode -is [int]) {
 } else {
     '<unavailable>'
 }
-$afterShutdownDiagnostic = Get-InstalledServiceDiagnostic $DataRoot $VersionRoot $ExpectedVersion
-if ($shutdownControlFailed -or $shutdownTimedOut -or $shutdownExitCode -ne 0) {
+if ($shutdownControlFailed -or $shutdownTimedOut -or $shutdownExitCode -ne 0 -or
+    -not $observedProcessesExited -or -not $descriptorFilesRemoved) {
     Write-Host "INSTALLED-SHUTDOWN-DIAGNOSTIC: stage=$safeShutdownStage category=$safeShutdownCategory exitCode=$safeShutdownExitCode"
     Write-InstalledServiceDiagnostic 'after' $afterShutdownDiagnostic
     Write-Host '::error::Unable to stop the seeded backend before upgrade smoke.'

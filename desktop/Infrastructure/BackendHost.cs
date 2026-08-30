@@ -480,13 +480,19 @@ internal sealed class BackendHost : IAsyncDisposable
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
             await process.WaitForExitAsync(timeout.Token).ConfigureAwait(false);
         }
-        catch (InvalidOperationException)
+        catch (InvalidOperationException) when (process.HasExited)
         {
             // The exact child already exited.
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException error)
         {
-            // Do not broaden termination if the exact child does not exit promptly.
+            if (process.HasExited)
+            {
+                return;
+            }
+            throw new TimeoutException(
+                "The exact Organizer runtime did not exit within the maintenance timeout.",
+                error);
         }
     }
 
@@ -570,9 +576,9 @@ internal sealed class BackendHost : IAsyncDisposable
         {
             return false;
         }
-        var candidateRoot = Path.GetFullPath(installRoot);
+        var candidateRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(installRoot));
         var currentLayout = InstallLayout.Resolve();
-        var currentRoot = Path.GetFullPath(currentLayout.InstallRoot);
+        var currentRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(currentLayout.InstallRoot));
         var currentDirectory = new DirectoryInfo(currentRoot);
         var productRoot = currentDirectory.Parent?.Name.Equals("versions", StringComparison.OrdinalIgnoreCase) == true
             ? currentDirectory.Parent.Parent?.FullName
@@ -581,7 +587,7 @@ internal sealed class BackendHost : IAsyncDisposable
         {
             return false;
         }
-        var versionsRoot = Path.GetFullPath(Path.Combine(productRoot, "versions"));
+        var versionsRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(Path.Combine(productRoot, "versions")));
         if (!candidateRoot.StartsWith(Path.TrimEndingDirectorySeparator(versionsRoot) + Path.DirectorySeparatorChar,
                 StringComparison.OrdinalIgnoreCase)
             || !Path.GetDirectoryName(candidateRoot)!.Equals(versionsRoot, StringComparison.OrdinalIgnoreCase))

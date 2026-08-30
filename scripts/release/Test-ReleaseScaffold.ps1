@@ -295,7 +295,7 @@ if ([regex]::Matches($maintenanceShutdownProbeText, [regex]::Escape($serviceDiag
     throw 'Release workflow service diagnostics must use the fixed safe scalar field allowlist exactly once.'
 }
 $shutdownDiagnosticIndex = $maintenanceShutdownProbeText.IndexOf($shutdownDiagnosticLine, [StringComparison]::Ordinal)
-$shutdownFailureIndex = $maintenanceShutdownProbeText.LastIndexOf('if ($shutdownControlFailed -or $shutdownTimedOut -or $shutdownExitCode -ne 0)', $shutdownDiagnosticIndex, [StringComparison]::Ordinal)
+$shutdownFailureIndex = $maintenanceShutdownProbeText.LastIndexOf('if ($shutdownControlFailed -or $shutdownTimedOut -or $shutdownExitCode -ne 0 -or', $shutdownDiagnosticIndex, [StringComparison]::Ordinal)
 $shutdownExitIndex = $maintenanceShutdownProbeText.IndexOf('exit 1', $shutdownDiagnosticIndex, [StringComparison]::Ordinal)
 if ($shutdownFailureIndex -lt 0 -or $shutdownDiagnosticIndex -le $shutdownFailureIndex -or $shutdownExitIndex -le $shutdownDiagnosticIndex) {
     throw 'Release workflow shutdown diagnostics must remain inside the fail-closed nonzero-exit branch.'
@@ -334,12 +334,27 @@ $shutdownContainsIndex = $maintenanceShutdownProbeText.IndexOf('$shutdownErrorTe
 if ($shutdownEmptyCheckIndex -lt 0 -or $shutdownContainsIndex -le $shutdownEmptyCheckIndex) {
     throw 'Release workflow must normalize and reject empty shutdown stderr before fixed-message classification.'
 }
-$beforeDiagnosticCall = "Write-InstalledServiceDiagnostic 'before' ("
+$beforeDiagnosticCall = "Write-InstalledServiceDiagnostic 'before' `$beforeShutdownDiagnostic"
 $afterDiagnosticCall = "Write-InstalledServiceDiagnostic 'after' `$afterShutdownDiagnostic"
 if ([regex]::Matches($maintenanceShutdownProbeText, [regex]::Escape($beforeDiagnosticCall)).Count -ne 1 -or
     [regex]::Matches($maintenanceShutdownProbeText, [regex]::Escape($afterDiagnosticCall)).Count -ne 1 -or
     [regex]::Matches($maintenanceShutdownProbeText, 'Write-InstalledServiceDiagnostic\b').Count -ne 3) {
     throw 'Release workflow service diagnostic phases must remain the fixed before/after calls.'
+}
+foreach ($shutdownPostconditionInvariant in @(
+    '$observedProcessIds = @($beforeShutdownDiagnostic.ProcessIds)',
+    '$observedProcessesExited = Test-ObservedProcessesExited $observedProcessIds',
+    '$descriptorFilesRemoved = $afterShutdownDiagnostic.DescriptorFileCount -eq 0',
+    '-not $observedProcessesExited -or -not $descriptorFilesRemoved'
+)) {
+    if (-not $maintenanceShutdownProbeText.Contains($shutdownPostconditionInvariant)) {
+        throw "Release smoke must prove the seeded process exited and its descriptor was removed: $shutdownPostconditionInvariant"
+    }
+}
+if ([regex]::Matches($maintenanceShutdownProbeText, '\bProcessIds\b').Count -ne 2 -or
+    $serviceDiagnosticLine.Contains('ProcessIds') -or
+    $shutdownDiagnosticLine.Contains('ProcessIds')) {
+    throw 'Release smoke may retain observed process IDs only for private postcondition checks, never public diagnostics.'
 }
 $shutdownErrorPathDeclaration = '$shutdownErrorPath = Join-Path $env:RUNNER_TEMP'
 $shutdownErrorPathIndex = $maintenanceShutdownProbeText.IndexOf($shutdownErrorPathDeclaration, [StringComparison]::Ordinal)
@@ -365,6 +380,7 @@ $safeStageBlock = @'
 $safeShutdownStage = switch ([string]$shutdownStage) {
     'process-control' { 'process-control' }
     'timeout' { 'timeout' }
+    'verification' { 'verification' }
     'maintenance' { 'maintenance' }
     'stable-forwarding' { 'stable-forwarding' }
     default { 'unexpected' }
@@ -374,6 +390,8 @@ $safeCategoryBlock = @'
 $safeShutdownCategory = switch ([string]$shutdownCategory) {
     'process-control-failed' { 'process-control-failed' }
     'timeout' { 'timeout' }
+    'process-still-running' { 'process-still-running' }
+    'descriptor-still-present' { 'descriptor-still-present' }
     'success' { 'success' }
     'stderr-read-failed' { 'stderr-read-failed' }
     'no-stderr' { 'no-stderr' }
@@ -801,6 +819,7 @@ if (-not [Regex]::IsMatch(
 }
 $desktopAppText = Get-Content -LiteralPath (Join-Path $repoRoot 'desktop\App.xaml.cs') -Raw
 $backendHostText = Get-Content -LiteralPath (Join-Path $repoRoot 'desktop\Infrastructure\BackendHost.cs') -Raw
+$installLayoutText = Get-Content -LiteralPath (Join-Path $repoRoot 'desktop\Infrastructure\InstallLayout.cs') -Raw
 $serverMainText = Get-Content -LiteralPath (Join-Path $repoRoot 'src\server\main.ts') -Raw
 foreach ($healthIsolationInvariant in @(
     'BackendHost.CreateHealthCheck(healthRoot)',
@@ -817,6 +836,60 @@ foreach ($healthIsolationInvariant in @(
 }
 if ($backendHostText.Contains('CSO_DATA_DIR') -or $serverMainText.Contains('CSO_DATA_DIR')) {
     throw 'Release desktop and server must not restore the generic CSO_DATA_DIR override.'
+}
+if (-not $installLayoutText.Contains('Path.TrimEndingDirectorySeparator(directory.FullName)') -or
+    -not $backendHostText.Contains('Path.TrimEndingDirectorySeparator(Path.GetFullPath(installRoot))')) {
+    throw 'Runtime install roots must remove AppContext.BaseDirectory trailing separators before descriptor and product-boundary use.'
+}
+$terminateExactStart = $backendHostText.IndexOf(
+    'private static async Task TerminateExactProcessAsync(Process process)',
+    [StringComparison]::Ordinal)
+$deleteDescriptorStart = $backendHostText.IndexOf(
+    'private static async Task DeleteDescriptorIfUnchangedAsync(',
+    [StringComparison]::Ordinal)
+if ($terminateExactStart -lt 0 -or $deleteDescriptorStart -le $terminateExactStart) {
+    throw 'Exact runtime termination and descriptor cleanup helpers are missing or reordered.'
+}
+$terminateExactBlock = $backendHostText.Substring(
+    $terminateExactStart,
+    $deleteDescriptorStart - $terminateExactStart)
+foreach ($terminationInvariant in @(
+    'using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));',
+    'await process.WaitForExitAsync(timeout.Token).ConfigureAwait(false);',
+    'catch (InvalidOperationException) when (process.HasExited)',
+    'catch (OperationCanceledException error)',
+    'if (process.HasExited)',
+    'throw new TimeoutException('
+)) {
+    if (-not $terminateExactBlock.Contains($terminationInvariant)) {
+        throw "Exact runtime termination must fail closed before descriptor cleanup: $terminationInvariant"
+    }
+}
+if (-not [Regex]::IsMatch(
+        $terminateExactBlock,
+        'catch \(OperationCanceledException error\)\s*\{\s*if \(process\.HasExited\)\s*\{\s*return;\s*\}\s*throw new TimeoutException\([\s\S]*?error\);\s*\}',
+        [System.Text.RegularExpressions.RegexOptions]::CultureInvariant)) {
+    throw 'A termination timeout may return only after HasExited is true; uncertain process state must propagate or throw.'
+}
+$stopCompatibleStart = $backendHostText.IndexOf(
+    'public async Task StopCompatibleServiceAsync()',
+    [StringComparison]::Ordinal)
+$probeDescriptorsStart = $backendHostText.IndexOf(
+    'private async Task<BackendSession?> ProbeDescriptorsAsync(',
+    $stopCompatibleStart,
+    [StringComparison]::Ordinal)
+$stopCompatibleBlock = $backendHostText.Substring(
+    $stopCompatibleStart,
+    $probeDescriptorsStart - $stopCompatibleStart)
+$terminateBeforeDescriptorDelete = $stopCompatibleBlock.IndexOf(
+    'await TerminateExactProcessAsync(process).ConfigureAwait(false);',
+    [StringComparison]::Ordinal)
+$descriptorDeleteAfterTermination = $stopCompatibleBlock.IndexOf(
+    'await DeleteDescriptorIfUnchangedAsync(descriptorPath, descriptor.Token).ConfigureAwait(false);',
+    $terminateBeforeDescriptorDelete,
+    [StringComparison]::Ordinal)
+if ($terminateBeforeDescriptorDelete -lt 0 -or $descriptorDeleteAfterTermination -le $terminateBeforeDescriptorDelete) {
+    throw 'Maintenance shutdown must confirm exact process exit before deleting its runtime descriptor.'
 }
 foreach ($desktopRouteInvariant in @(
     'e.Args.Contains("--complete-plugin-install", StringComparer.OrdinalIgnoreCase)',
