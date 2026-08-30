@@ -142,6 +142,7 @@ if (-not $draftCreateBlock.Contains('--draft') -or $releaseWorkflowText.Contains
 foreach ($rollbackSmokeInvariant in @(
     'Publish deterministic failing-health upgrade fixture',
     '$initialInstallLog = Join-Path $env:RUNNER_TEMP ''cso-initial-install.log''',
+    '$initialInstallArgs = "$installArgs /LOG=`"$initialInstallLog`""',
     'SETUP-DIAGNOSTIC:',
     '$fixtureHealthProcess = Start-Process',
     'if ($fixtureHealthProcess.ExitCode -ne 71)',
@@ -272,6 +273,9 @@ $installerInvariants = @(
     "ExtractTemporaryFiles('{app}\versions\{#AppVersion}\*');",
     'BackupExistingDatabasePreflight();',
     'VerifyVersionHealthPreflight();',
+    'ExecAndLogOutput(',
+    'Health-check output:',
+    'Bundled health-check process exited with code',
     'Installer preflight completed before the normal file-copy stage.',
     'tools\backup-state.mjs',
     '--data-dir',

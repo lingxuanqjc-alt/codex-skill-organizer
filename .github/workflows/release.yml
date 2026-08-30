@@ -190,12 +190,13 @@ jobs:
           $setup = Join-Path $releaseRoot "SkillOrganizerForCodex-$version-win-x64-setup.exe"
           $portableZip = Join-Path $releaseRoot "SkillOrganizerForCodex-$version-win-x64-portable.zip"
           $initialInstallLog = Join-Path $env:RUNNER_TEMP 'cso-initial-install.log'
-          $installArgs = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /TYPE=desktop /COMPONENTS=workbench /LOG=`"$initialInstallLog`""
-          $process = Start-Process -FilePath $setup -ArgumentList $installArgs -Wait -PassThru
+          $installArgs = '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /TYPE=desktop /COMPONENTS=workbench'
+          $initialInstallArgs = "$installArgs /LOG=`"$initialInstallLog`""
+          $process = Start-Process -FilePath $setup -ArgumentList $initialInstallArgs -Wait -PassThru
           if ($process.ExitCode -ne 0) {
             if (Test-Path -LiteralPath $initialInstallLog -PathType Leaf) {
               Get-Content -LiteralPath $initialInstallLog |
-                Where-Object { $_ -match '(?i)Installer preflight|Extracted and verified|Completed the verified|Completed the exact-version|Unable to launch' } |
+                Where-Object { $_ -match '(?i)Installer preflight|Extracted and verified|Completed the verified|Completed the exact-version|Unable to launch|Health-check output|Bundled health-check' } |
                 Select-Object -Last 30 |
                 ForEach-Object { Write-Host "SETUP-DIAGNOSTIC: $_" }
             }

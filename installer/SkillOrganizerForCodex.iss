@@ -579,18 +579,27 @@ begin
   Log('Completed the verified SQLite upgrade backup preflight.');
 end;
 
+procedure LogHealthCheckOutput(const S: String; const Error, FirstLine: Boolean);
+begin
+  if Error then
+    Log('Health-check output capture failed.')
+  else
+    Log('Health-check output: ' + S);
+end;
+
 procedure VerifyVersionHealthPreflight();
 var
   ExitCode: Integer;
 begin
-  if not Exec(
+  if not ExecAndLogOutput(
     TemporaryVersionLauncherPath(),
     '--health-check --upgrade-backup-result ' +
       AddQuotes(AddBackslash(DataRoot()) + 'upgrade-backup-result.json'),
     TemporaryVersionRoot(),
     SW_HIDE,
     ewWaitUntilTerminated,
-    ExitCode) then
+    ExitCode,
+    @LogHealthCheckOutput) then
   begin
     Log('Unable to launch the bundled health-check executable: ' + SysErrorMessage(ExitCode));
     if (ExitCode = 577) or (ExitCode = 1260) then
@@ -603,6 +612,7 @@ begin
   end;
   if ExitCode <> 0 then
   begin
+    Log('Bundled health-check process exited with code ' + IntToStr(ExitCode) + '.');
     RaiseException(
       '新版健康检查失败，因此安装没有写入程序文件，原版本保持不变。请查看安装日志。' + #13#10 +
       'The new version failed its health check; no program files were installed and the previous version remains unchanged.');
