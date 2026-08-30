@@ -174,7 +174,9 @@ foreach ($rollbackSmokeInvariant in @(
     '$seedProcess = Start-Process -FilePath $stableLauncher -ArgumentList @(''--headless'', ''--ensure-service'') -PassThru -WindowStyle Hidden',
     'if (-not $seedProcess.WaitForExit(60000))',
     '$seedProcess.Kill($true)',
+    '$seedProcess.WaitForExit(5000) | Out-Null',
     'if ($seedProcess.ExitCode -ne 0)',
+    '$seedProcess.Dispose()',
     '$shutdownProcess = Start-Process -FilePath $stableLauncher -ArgumentList ''--shutdown-for-maintenance'' -Wait -PassThru -WindowStyle Hidden',
     'if ($shutdownProcess.ExitCode -ne 0)',
     '$rollbackHealthProcess = Start-Process -FilePath $stableLauncher -ArgumentList ''--health-check'' -Wait -PassThru -WindowStyle Hidden',
@@ -243,7 +245,10 @@ if ([regex]::Matches($releaseWorkflowText, [regex]::Escape($expectedHealthProbeA
 if ($releaseWorkflowText.Contains('& $stableLauncher --') -or
     $releaseWorkflowText.Contains('& (Join-Path $portableRoot ''SkillOrganizerForCodex.exe'') --') -or
     $installerMatrixText.Contains('& $stableLauncher --')) {
-    throw 'Windows GUI launchers must be invoked with Start-Process -Wait -PassThru before their exit codes are inspected.'
+    throw 'Windows GUI launchers must use Start-Process and an explicit wait before their exit codes are inspected.'
+}
+if ($releaseWorkflowText.Contains('$seedProcess = Start-Process -FilePath $stableLauncher -ArgumentList @(''--headless'', ''--ensure-service'') -Wait')) {
+    throw 'The service seed must wait only for the direct launcher because the backend child is intentionally retained.'
 }
 foreach ($matrixInvariant in @(
     "if (`$env:GITHUB_ACTIONS -ne 'true')",
