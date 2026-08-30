@@ -385,10 +385,10 @@ jobs:
 
           $stableLauncher = Join-Path $productRoot 'SkillOrganizerForCodex.exe'
           $currentPointer = Join-Path $productRoot 'current.json'
-          & $stableLauncher --headless --ensure-service
-          if ($LASTEXITCODE -ne 0) { throw 'Unable to seed the installed SQLite database for upgrade-backup smoke.' }
-          & $stableLauncher --shutdown-for-maintenance
-          if ($LASTEXITCODE -ne 0) { throw 'Unable to stop the seeded backend before upgrade smoke.' }
+          $seedProcess = Start-Process -FilePath $stableLauncher -ArgumentList @('--headless', '--ensure-service') -Wait -PassThru -WindowStyle Hidden
+          if ($seedProcess.ExitCode -ne 0) { throw 'Unable to seed the installed SQLite database for upgrade-backup smoke.' }
+          $shutdownProcess = Start-Process -FilePath $stableLauncher -ArgumentList '--shutdown-for-maintenance' -Wait -PassThru -WindowStyle Hidden
+          if ($shutdownProcess.ExitCode -ne 0) { throw 'Unable to stop the seeded backend before upgrade smoke.' }
           $dataRoot = Join-Path $env:LOCALAPPDATA 'SkillOrganizerForCodex'
           if (-not (Test-Path -LiteralPath (Join-Path $dataRoot 'organizer.db') -PathType Leaf)) {
             throw 'Upgrade smoke did not create organizer.db.'
@@ -483,8 +483,8 @@ jobs:
               (Test-Path -LiteralPath $personalPlugin)) {
             throw 'Preflight failure changed the optional plugin or personal marketplace.'
           }
-          & $stableLauncher --health-check
-          if ($LASTEXITCODE -ne 0) { throw 'Previous version was unhealthy after the failed upgrade rollback.' }
+          $rollbackHealthProcess = Start-Process -FilePath $stableLauncher -ArgumentList '--health-check' -Wait -PassThru -WindowStyle Hidden
+          if ($rollbackHealthProcess.ExitCode -ne 0) { throw 'Previous version was unhealthy after the failed upgrade rollback.' }
 
           $payloadRoot = [IO.Path]::GetFullPath("artifacts/work/$version/version-payload")
           ./installer/TestFixtures/InstallerMatrix/Invoke-InstallerMatrix.ps1 `
@@ -606,8 +606,8 @@ jobs:
           $portableExtract = Join-Path $env:RUNNER_TEMP 'portable'
           Expand-Archive -LiteralPath $portableZip -DestinationPath $portableExtract
           $portableRoot = Get-ChildItem -LiteralPath $portableExtract -Directory | Select-Object -First 1 -ExpandProperty FullName
-          & (Join-Path $portableRoot 'SkillOrganizerForCodex.exe') --health-check
-          if ($LASTEXITCODE -ne 0) { throw 'Portable health check failed.' }
+          $portableHealthProcess = Start-Process -FilePath (Join-Path $portableRoot 'SkillOrganizerForCodex.exe') -ArgumentList '--health-check' -Wait -PassThru -WindowStyle Hidden
+          if ($portableHealthProcess.ExitCode -ne 0) { throw 'Portable health check failed.' }
           ./scripts/release/New-ContentManifest.ps1 -Root $portableRoot -OutputPath "$env:RUNNER_TEMP/portable-manifest.json" | Out-Null
           ./scripts/release/Compare-ContentManifest.ps1 `
             -ReferenceManifest (Join-Path $releaseRoot "CONTENT-MANIFEST-portable-$version.json") `

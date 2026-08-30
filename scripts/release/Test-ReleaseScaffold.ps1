@@ -171,6 +171,14 @@ foreach ($rollbackSmokeInvariant in @(
     'INSTALLED-LAUNCHER-DIAGNOSTIC: pointerValid=$pointerValid hashesEqual=$launcherHashesEqual',
     'INSTALLED-HEALTH-DIAGNOSTIC: directExitCode=$($directHealthProcess.ExitCode) stableExitCode=$($stableHealthProcess.ExitCode)',
     'if ($directHealthProcess.ExitCode -ne 0 -or $stableHealthProcess.ExitCode -ne 0)',
+    '$seedProcess = Start-Process -FilePath $stableLauncher -ArgumentList @(''--headless'', ''--ensure-service'') -Wait -PassThru -WindowStyle Hidden',
+    'if ($seedProcess.ExitCode -ne 0)',
+    '$shutdownProcess = Start-Process -FilePath $stableLauncher -ArgumentList ''--shutdown-for-maintenance'' -Wait -PassThru -WindowStyle Hidden',
+    'if ($shutdownProcess.ExitCode -ne 0)',
+    '$rollbackHealthProcess = Start-Process -FilePath $stableLauncher -ArgumentList ''--health-check'' -Wait -PassThru -WindowStyle Hidden',
+    'if ($rollbackHealthProcess.ExitCode -ne 0)',
+    '$portableHealthProcess = Start-Process -FilePath (Join-Path $portableRoot ''SkillOrganizerForCodex.exe'') -ArgumentList ''--health-check'' -Wait -PassThru -WindowStyle Hidden',
+    'if ($portableHealthProcess.ExitCode -ne 0)',
     '$fixtureHealthProcess = Start-Process',
     'if ($fixtureHealthProcess.ExitCode -ne 71)',
     '$faultHealthProcess = Start-Process',
@@ -227,8 +235,13 @@ if ($releaseWorkflowText -match '(?im)Write-(?:Host|Output)[^\r\n]*\$stderrText'
     throw 'Release workflow must not print raw bundled-service stderr into the public Actions log.'
 }
 $expectedHealthProbeArguments = "-ArgumentList '--health-check' -Wait -PassThru -WindowStyle Hidden"
-if ([regex]::Matches($releaseWorkflowText, [regex]::Escape($expectedHealthProbeArguments)).Count -ne 4) {
+if ([regex]::Matches($releaseWorkflowText, [regex]::Escape($expectedHealthProbeArguments)).Count -ne 6) {
     throw 'Release health probes must wait for the hidden child process and inspect their exit codes explicitly.'
+}
+if ($releaseWorkflowText.Contains('& $stableLauncher --') -or
+    $releaseWorkflowText.Contains('& (Join-Path $portableRoot ''SkillOrganizerForCodex.exe'') --') -or
+    $installerMatrixText.Contains('& $stableLauncher --')) {
+    throw 'Windows GUI launchers must be invoked with Start-Process -Wait -PassThru before their exit codes are inspected.'
 }
 foreach ($matrixInvariant in @(
     "if (`$env:GITHUB_ACTIONS -ne 'true')",
@@ -239,6 +252,10 @@ foreach ($matrixInvariant in @(
     '$sameLogText = Invoke-Setup $sameVersionFaultSetup "$silentBase /TYPE=desktop /COMPONENTS=workbench" 70 $sameLog',
     '$newLogText = Invoke-Setup $newVersionFaultSetup "$silentBase /TYPE=desktop /COMPONENTS=workbench" 70 $newLog',
     '$cleanLogText = Invoke-Setup $newVersionFaultSetup "$silentBase /TYPE=full" 70 $cleanLog',
+    '$baselineHealthProcess = Start-Process -FilePath $stableLauncher -ArgumentList ''--health-check'' -Wait -PassThru -WindowStyle Hidden',
+    'if ($baselineHealthProcess.ExitCode -ne 0)',
+    '$reinstalledHealthProcess = Start-Process -FilePath $stableLauncher -ArgumentList ''--health-check'' -Wait -PassThru -WindowStyle Hidden',
+    'if ($reinstalledHealthProcess.ExitCode -ne 0)',
     'Same-version activation rollback did not restore the complete install state byte-for-byte.',
     'Old-to-new activation rollback did not restore the complete install state byte-for-byte.',
     'Clean first-install activation rollback did not restore the absent program, registry, shortcut, plugin, and marketplace state.',

@@ -203,8 +203,8 @@ if ($Mode -eq 'Transaction') {
         -not (Test-Path -LiteralPath $currentPointer -PathType Leaf)) {
         throw 'Transaction matrix requires the baseline desktop version to be installed first.'
     }
-    & $stableLauncher --health-check
-    if ($LASTEXITCODE -ne 0) { throw 'Baseline desktop version is unhealthy before transaction tests.' }
+    $baselineHealthProcess = Start-Process -FilePath $stableLauncher -ArgumentList '--health-check' -Wait -PassThru -WindowStyle Hidden
+    if ($baselineHealthProcess.ExitCode -ne 0) { throw 'Baseline desktop version is unhealthy before transaction tests.' }
 
     $baselineState = Get-InstallStateSnapshot
     $sameVersionFaultSetup = Compile-ActivationFaultInstaller $Version 'same-version'
@@ -243,8 +243,8 @@ if ($Mode -eq 'Transaction') {
 
     $reinstallLog = Join-Path $env:RUNNER_TEMP 'cso-baseline-reinstall-after-transaction-matrix.log'
     $null = Invoke-Setup $SetupPath "$silentBase /TYPE=desktop /COMPONENTS=workbench" 0 $reinstallLog
-    & $stableLauncher --health-check
-    if ($LASTEXITCODE -ne 0) { throw 'Baseline reinstall was unhealthy after the transaction matrix.' }
+    $reinstalledHealthProcess = Start-Process -FilePath $stableLauncher -ArgumentList '--health-check' -Wait -PassThru -WindowStyle Hidden
+    if ($reinstalledHealthProcess.ExitCode -ne 0) { throw 'Baseline reinstall was unhealthy after the transaction matrix.' }
     Write-Output 'Installer transaction matrix passed.'
     return
 }
