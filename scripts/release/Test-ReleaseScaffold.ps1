@@ -102,6 +102,23 @@ if ($installerMatrixExitStatements.Count -ne 0) {
     throw 'Installer matrix must return to its caller; an exit statement would terminate the shared release PowerShell host.'
 }
 $releaseWorkflowText = Get-Content -LiteralPath (Join-Path $repoRoot '.github\workflows\release.yml') -Raw
+$tagPublishCondition = 'if: ${{ github.event_name == ''push'' && startsWith(github.ref, ''refs/tags/v'') }}'
+if ([regex]::Matches($releaseWorkflowText, [regex]::Escape($tagPublishCondition)).Count -ne 3) {
+    throw 'Manual release workflow runs must never stage notes or enter the publish job, including when dispatched from a tag.'
+}
+foreach ($releaseIdentityInvariant in @(
+    'source_sha: ${{ steps.release.outputs.source_sha }}',
+    '"source_sha=$($env:GITHUB_SHA.ToLowerInvariant())" >> $env:GITHUB_OUTPUT',
+    'BUILT_SOURCE_SHA: ${{ needs.build-and-smoke.outputs.source_sha }}',
+    '$refJson = & gh api --method GET "repos/$repository/git/ref/tags/$encodedTag"',
+    '$tagJson = & gh api --method GET "repos/$repository/git/tags/$objectSha"',
+    'if ($resolvedCommit -ne $builtSourceSha)',
+    'Release tag moved after build:'
+)) {
+    if (-not $releaseWorkflowText.Contains($releaseIdentityInvariant)) {
+        throw "Release workflow source/tag identity gate is missing: $releaseIdentityInvariant"
+    }
+}
 foreach ($rollbackSmokeInvariant in @(
     'Publish deterministic failing-health upgrade fixture',
     '$faultVersion = "$($versionMatch.Groups[1].Value).$($versionMatch.Groups[2].Value).$([int]$versionMatch.Groups[3].Value + 1)-health-failure-fixture"',

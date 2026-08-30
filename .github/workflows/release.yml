@@ -25,6 +25,7 @@ jobs:
       contents: read
     outputs:
       version: ${{ steps.release.outputs.version }}
+      source_sha: ${{ steps.release.outputs.source_sha }}
     steps:
       - name: Check out source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -67,12 +68,16 @@ jobs:
           if ($version -notmatch '^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?$') {
             throw "Invalid release version: $version"
           }
+          if ($env:GITHUB_SHA -notmatch '^[0-9a-f]{40}$') {
+            throw 'GitHub did not provide a valid source commit SHA.'
+          }
           $runtime = Get-Content -LiteralPath scripts/release/runtime-lock.json -Raw | ConvertFrom-Json
           if ($runtime.schemaVersion -ne 1 -or $runtime.url -notmatch '^https://nodejs\.org/' -or
               $runtime.archiveSha256 -notmatch '^[0-9a-f]{64}$') {
             throw 'scripts/release/runtime-lock.json is invalid.'
           }
           "version=$version" >> $env:GITHUB_OUTPUT
+          "source_sha=$($env:GITHUB_SHA.ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           "node_url=$($runtime.url)" >> $env:GITHUB_OUTPUT
           "node_sha256=$($runtime.archiveSha256)" >> $env:GITHUB_OUTPUT
 
@@ -464,14 +469,14 @@ jobs:
           retention-days: 30
 
       - name: Stage fixed release safety notes
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Path artifacts/publish-notes -Force | Out-Null
           Copy-Item -LiteralPath .github/RELEASE_NOTES.md -Destination artifacts/publish-notes/RELEASE_NOTES.md
 
       - name: Upload fixed release safety notes
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: SkillOrganizerForCodex-${{ steps.release.outputs.version }}-release-notes
@@ -481,7 +486,7 @@ jobs:
 
   publish:
     name: Publish verified GitHub release
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
     needs: build-and-smoke
     runs-on: windows-latest
     timeout-minutes: 10
@@ -564,8 +569,42 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
+          BUILT_SOURCE_SHA: ${{ needs.build-and-smoke.outputs.source_sha }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          REPOSITORY: ${{ github.repository }}
         run: |
           $version = '${{ needs.build-and-smoke.outputs.version }}'
+          $builtSourceSha = ([string]$env:BUILT_SOURCE_SHA).ToLowerInvariant()
+          $tag = $env:RELEASE_TAG
+          $repository = $env:REPOSITORY
+          if ($builtSourceSha -notmatch '^[0-9a-f]{40}$' -or $tag -ne "v$version" -or
+              $repository -notmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$') {
+            throw 'Release identity inputs are invalid.'
+          }
+
+          $encodedTag = [Uri]::EscapeDataString($tag)
+          $refJson = & gh api --method GET "repos/$repository/git/ref/tags/$encodedTag"
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to resolve the release tag immediately before publication.' }
+          $object = (($refJson -join [Environment]::NewLine) | ConvertFrom-Json).object
+          $resolvedCommit = $null
+          for ($depth = 0; $depth -lt 8; $depth++) {
+            $objectType = [string]$object.type
+            $objectSha = ([string]$object.sha).ToLowerInvariant()
+            if ($objectSha -notmatch '^[0-9a-f]{40}$') { throw 'The release tag contains an invalid Git object SHA.' }
+            if ($objectType -eq 'commit') {
+              $resolvedCommit = $objectSha
+              break
+            }
+            if ($objectType -ne 'tag') { throw "The release tag resolves to unsupported Git object type: $objectType" }
+            $tagJson = & gh api --method GET "repos/$repository/git/tags/$objectSha"
+            if ($LASTEXITCODE -ne 0) { throw 'Unable to peel the annotated release tag.' }
+            $object = (($tagJson -join [Environment]::NewLine) | ConvertFrom-Json).object
+          }
+          if (-not $resolvedCommit) { throw 'The annotated release tag chain is too deep.' }
+          if ($resolvedCommit -ne $builtSourceSha) {
+            throw "Release tag moved after build: expected $builtSourceSha, found $resolvedCommit."
+          }
+
           $releaseRoot = [System.IO.Path]::GetFullPath("artifacts/release/$version")
           $notesPath = [System.IO.Path]::GetFullPath('artifacts/publish-notes/RELEASE_NOTES.md')
           $notes = Get-Content -LiteralPath $notesPath -Raw
