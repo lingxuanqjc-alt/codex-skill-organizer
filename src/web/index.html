@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="zh-CN" data-design-system="quiet-luxury-a">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="skill-organizer-version" content="__PRODUCT_VERSION__" />
+    <link rel="icon" href="data:," />
+    <meta name="color-scheme" content="light" />
+    <title>Skill Organizer for Codex</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/premium-minimal.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <a class="brand" href="/" aria-label="Skill Organizer for Codex">
+          <span class="brand-mark" aria-hidden="true">S</span>
+          <span>
+            <strong>Skill Organizer for Codex</strong>
+            <small data-i18n="brandSubtitle">本机 Skill 分类、整理与管理</small>
+          </span>
+        </a>
+        <div class="top-actions">
+          <span id="runtimeBadge" class="status-chip muted" data-i18n="runtimeConnecting">正在连接 Codex…</span>
+          <button id="managementStatusButton" class="management-status off" type="button">
+            <span class="status-dot" aria-hidden="true"></span>
+            <span id="managementStatusText" data-i18n="managementOff">管理模式：关闭</span>
+          </button>
+          <button id="languageButton" class="button ghost compact" type="button" aria-label="Switch language">EN</button>
+          <button id="desktopButton" class="button ghost" type="button" hidden data-i18n="openDesktop">打开桌面工作台</button>
+          <button id="rescanButton" class="button primary" type="button" data-i18n="rescan">重新扫描</button>
+        </div>
+      </header>
+
+      <div class="workspace">
+        <aside class="sidebar" aria-label="Workspace navigation">
+          <p class="folio">LOCAL · SKILL INDEX</p>
+          <nav id="primaryNav" class="primary-nav" aria-label="Workbench sections">
+            <button type="button" class="primary-nav-button active" data-panel="overview" aria-current="page">
+              <span data-i18n="overview">概览</span><span aria-hidden="true">01</span>
+            </button>
+            <button type="button" class="primary-nav-button" data-panel="inventory">
+              <span data-i18n="inventory">Skill 清单</span><span aria-hidden="true">02</span>
+            </button>
+            <button type="button" class="primary-nav-button" data-panel="management">
+              <span data-i18n="management">管理</span><span aria-hidden="true">03</span>
+            </button>
+          </nav>
+
+          <div id="inventoryFilters" hidden>
+            <section>
+              <h2 data-i18n="functionalCategories">功能分类</h2>
+              <nav id="categoryNav" class="filter-nav" aria-label="Categories"></nav>
+            </section>
+            <section>
+              <h2 data-i18n="sourceScope">来源范围</h2>
+              <nav id="scopeNav" class="filter-nav" aria-label="Scopes"></nav>
+            </section>
+          </div>
+
+          <section class="sidebar-note">
+            <strong data-i18n="localFirst">本机优先</strong>
+            <p data-i18n="localFirstNote">分类写入独立 SQLite；扫描不会改写 SKILL.md。外部管理动作只有在管理模式开启并再次确认后才可执行。</p>
+          </section>
+        </aside>
+
+        <main class="main-content">
+          <section id="overviewPanel" class="workbench-panel active" data-panel-content="overview" aria-labelledby="overviewTitle">
+            <div class="hero">
+              <div>
+                <p class="eyebrow">SKILL OPERATIONS · __PRODUCT_VERSION__</p>
+                <h1 id="overviewTitle" data-i18n="overviewTitle">把每台电脑上不同的 Skill，整理成同一套工作视图</h1>
+                <p data-i18n="overviewLead">逻辑 Skill 聚合展示；分类与个人偏好跨实例共享，启停、更新证据和隔离始终命中具体实例或安装单元。</p>
+              </div>
+              <dl id="metrics" class="metrics" aria-label="Inventory summary"></dl>
+            </div>
+
+            <div class="overview-grid">
+              <article class="overview-card accent-card">
+                <p class="eyebrow">CLASSIFY</p>
+                <h2 data-i18n="classificationHealth">分类健康度</h2>
+                <div id="classificationHealth" class="large-stat">—</div>
+                <p id="classificationHealthNote" class="muted-copy"></p>
+                <button type="button" class="button ghost panel-link" data-target-panel="inventory" data-i18n="reviewInventory">检查 Skill 清单</button>
+              </article>
+              <article class="overview-card">
+                <p class="eyebrow">ORGANIZE</p>
+                <h2 data-i18n="stagedSuggestions">建议暂存区</h2>
+                <div id="suggestionMetric" class="large-stat">—</div>
+                <p class="muted-copy" data-i18n="suggestionBoundary">模型建议不会直接改变分类，必须在工作台中接受或拒绝。</p>
+                <button type="button" class="button ghost panel-link" data-target-panel="management" data-i18n="reviewSuggestions">审核建议</button>
+              </article>
+              <article class="overview-card">
+                <p class="eyebrow">MANAGE</p>
+                <h2 data-i18n="managementBoundary">管理边界</h2>
+                <div id="managementMetric" class="large-stat">—</div>
+                <p class="muted-copy" data-i18n="managementBoundaryNote">更新检查只读取精确证据；隔离先生成影响计划，工作台不会从计划页直接移动文件。</p>
+                <button type="button" class="button ghost panel-link" data-target-panel="management" data-i18n="openManagement">打开管理</button>
+              </article>
+              <article class="overview-card release-note-card">
+                <p class="eyebrow">DATA BOUNDARY</p>
+                <h2 data-i18n="freshDatabase">0.2.0 使用全新数据库</h2>
+                <p data-i18n="freshDatabaseNote">本版本从空 SQLite 数据库开始，不导入 0.1.1 JSON。旧状态文件原样保留，不会被删除或改写。</p>
+              </article>
+            </div>
+          </section>
+
+          <section id="inventoryPanel" class="workbench-panel" data-panel-content="inventory" aria-labelledby="recordsTitle" hidden>
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">LOGICAL SKILL INVENTORY</p>
+                <h1 id="recordsTitle" data-i18n="inventoryTitle">Skill 清单</h1>
+                <p data-i18n="inventoryLead">每一行代表一个逻辑 Skill；展开后查看本机的具体路径、插件版本和运行状态。</p>
+              </div>
+              <div class="record-actions">
+                <span id="resultCount" aria-live="polite">0</span>
+                <button id="smartSortButton" class="button ghost" type="button" data-i18n="smartSort">智能整理待分类项</button>
+                <button id="diagnosticsButton" class="button ghost" type="button" data-i18n="diagnostics">诊断</button>
+              </div>
+            </div>
+
+            <section class="controls" aria-label="Inventory filters">
+              <label class="search-field">
+                <span data-i18n="search">搜索</span>
+                <input id="searchInput" type="search" data-i18n-placeholder="searchPlaceholder" placeholder="名称、说明、来源、路径或标签" autocomplete="off" />
+              </label>
+              <label>
+                <span data-i18n="runtimeState">运行状态</span>
+                <select id="runtimeFilter">
+                  <option value="all" data-i18n="all">全部</option>
+                  <option value="enabled" data-i18n="enabled">已启用</option>
+                  <option value="disabled" data-i18n="disabled">已停用</option>
+                  <option value="cache" data-i18n="physicalOnly">仅物理实例</option>
+                </select>
+              </label>
+              <label>
+                <span data-i18n="sourceFilter">具体来源</span>
+                <select id="sourceFilter"><option value="all" data-i18n="allSources">全部来源</option></select>
+              </label>
+              <label>
+                <span data-i18n="pluginFilter">插件</span>
+                <select id="pluginFilter"><option value="all" data-i18n="allPlugins">全部插件</option></select>
+              </label>
+              <label>
+                <span data-i18n="tags">标签</span>
+                <select id="tagFilter"><option value="all" data-i18n="allTags">全部标签</option></select>
+              </label>
+              <label class="check-field">
+                <input id="duplicateFilter" type="checkbox" />
+                <span data-i18n="duplicateOnly">只看同名冲突</span>
+              </label>
+              <button id="resetFiltersButton" class="button text" type="button" data-i18n="clearFilters">清除筛选</button>
+            </section>
+
+            <section id="bulkBar" class="bulk-bar" aria-label="Bulk operations" hidden>
+              <strong><span id="selectedCount">0</span> <span data-i18n="selectedEligible">项已选择（已排除锁定项）</span></strong>
+              <label>
+                <span class="sr-only" data-i18n="bulkCategory">批量分类</span>
+                <select id="bulkCategory"><option value="" data-i18n="chooseCategory">选择分类</option></select>
+              </label>
+              <input id="bulkTags" type="text" data-i18n-placeholder="bulkTagPlaceholder" placeholder="标签，逗号分隔" aria-label="Bulk tags" />
+              <button id="bulkApplyButton" class="button primary" type="button" data-i18n="applyCategoryTags">应用分类与标签</button>
+              <button id="bulkFavoriteButton" class="button ghost" type="button" data-i18n="favorite">收藏</button>
+              <button id="bulkEnableButton" class="button ghost management-action" type="button" data-i18n="enable">启用</button>
+              <button id="bulkDisableButton" class="button ghost management-action" type="button" data-i18n="disable">停用</button>
+              <button id="bulkRestoreButton" class="button text" type="button" data-i18n="restoreAutomatic">恢复自动分类</button>
+            </section>
+
+            <div id="loadingState" class="state-panel" aria-live="polite" data-i18n="loadingInventory">正在恢复本机状态并扫描 Skill…</div>
+            <div id="errorState" class="state-panel error" hidden></div>
+            <div id="emptyState" class="state-panel" hidden data-i18n="emptyInventory">没有符合当前筛选条件的 Skill。</div>
+            <p id="dragStatus" class="sr-only" role="status" aria-live="polite"></p>
+
+            <div id="tableWrap" class="table-wrap" role="region" tabindex="0" data-i18n-aria-label="virtualInventory" aria-label="虚拟滚动 Skill 清单" hidden>
+              <table>
+                <thead>
+                  <tr>
+                    <th class="select-column"><input id="selectPage" type="checkbox" data-i18n-aria-label="selectVisibleSkills" aria-label="选择当前可见且未锁定的 Skill" /></th>
+                    <th data-i18n="skill">Skill</th>
+                    <th data-i18n="classificationAndTags">分类与标签</th>
+                    <th data-i18n="sourceAndInstances">来源与实例</th>
+                    <th data-i18n="codexRuntime">Codex 运行状态</th>
+                  </tr>
+                </thead>
+                <tbody id="skillTableBody"></tbody>
+              </table>
+            </div>
+
+            <nav id="pagination" class="pagination" data-i18n-aria-label="virtualNavigation" aria-label="虚拟清单导航">
+              <button id="previousPage" class="button ghost" type="button" data-i18n="jumpStart">跳到顶部</button>
+              <span id="pageLabel" role="status" aria-live="polite">0 / 0</span>
+              <button id="nextPage" class="button ghost" type="button" data-i18n="jumpEnd">跳到末尾</button>
+            </nav>
+          </section>
+
+          <section id="managementPanel" class="workbench-panel" data-panel-content="management" aria-labelledby="managementTitle" hidden>
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">EXPLICIT CONSENT · SAFE MANAGEMENT</p>
+                <h1 id="managementTitle" data-i18n="managementTitle">管理</h1>
+                <p data-i18n="managementLead">分类和标签始终可保存；启停、隔离与恢复必须先由用户在桌面工作台开启管理模式。</p>
+              </div>
+              <button id="refreshManagementButton" class="button ghost" type="button" data-i18n="refreshManagement">刷新管理数据</button>
+            </div>
+
+            <div class="management-grid">
+              <article class="management-card mode-card full-span">
+                <div>
+                  <p class="eyebrow">MANAGEMENT MODE</p>
+                  <h2 data-i18n="managementMode">管理模式</h2>
+                  <p id="managementModeExplanation" class="muted-copy"></p>
+                </div>
+                <label class="mode-switch">
+                  <input id="managementModeToggle" type="checkbox" role="switch" />
+                  <span aria-hidden="true"></span>
+                  <strong id="managementToggleLabel" data-i18n="closed">已关闭</strong>
+                </label>
+              </article>
+
+              <article class="management-card full-span">
+                <div class="card-heading">
+                  <div><p class="eyebrow">PRECONDITION-MATCHED HISTORY</p><h2 data-i18n="safeUndo">安全撤销</h2></div>
+                </div>
+                <p class="boundary-note" data-i18n="safeUndoBoundary">只有当前分类语义状态或精确 runtime 状态仍等于操作后状态时才可撤销；runtime 撤销仍需管理模式和敏感项二次确认。</p>
+                <div id="undoActionsList" class="management-list compact-list"></div>
+              </article>
+
+              <article id="settingsDirectoryCard" class="management-card full-span">
+                <div class="card-heading">
+                  <div><p class="eyebrow">PORTABLE WORKSPACE SETTINGS</p><h2 data-i18n="settingsDirectory">设置 / 目录</h2></div>
+                  <span id="settingsCapabilityBadge" class="status-chip muted"></span>
+                </div>
+                <p class="boundary-note" data-i18n="settingsBoundary">目录、项目、保存视图和分类显示设置保存在本机 SQLite。新增目录默认只读，管理授权必须单独开启。</p>
+                <div class="settings-grid">
+                  <section class="settings-section">
+                    <h3 data-i18n="rootsAndProject">目录与项目</h3>
+                    <div id="configuredRootsList" class="management-list compact-list"></div>
+                    <div class="compact-form desktop-setting-write">
+                      <label><span data-i18n="rootLabel">目录名称</span><input id="rootLabelInput" type="text" data-i18n-placeholder="rootLabelPlaceholder" placeholder="例如：团队 Skills" /></label>
+                      <label><span data-i18n="absoluteRootPath">本机绝对路径</span><input id="rootPathInput" type="text" placeholder="D:\Skills" /></label>
+                      <button id="addRootButton" class="button ghost compact" type="button" data-i18n="addReadonlyRoot">添加只读目录</button>
+                    </div>
+                    <div class="project-setting">
+                      <p class="source-meta"><span data-i18n="selectedProject">当前项目</span>：<strong id="selectedProjectValue">—</strong></p>
+                      <div class="inline-actions desktop-setting-write">
+                        <input id="projectPathInput" type="text" placeholder="D:\Projects\Example" aria-label="Project path" />
+                        <button id="selectProjectButton" class="button ghost compact" type="button" data-i18n="selectProject">选择项目</button>
+                        <button id="clearProjectButton" class="button text compact" type="button" data-i18n="clearProject">清除项目</button>
+                      </div>
+                    </div>
+                  </section>
+
+                  <section class="settings-section">
+                    <h3 data-i18n="savedViews">保存视图</h3>
+                    <p class="source-meta" data-i18n="savedViewsNote">保存当前分类、来源、运行状态、标签、搜索和冲突筛选；数据不再写入浏览器 localStorage。</p>
+                    <label><span data-i18n="savedView">已保存视图</span><select id="savedViewSelect"></select></label>
+                    <label class="desktop-setting-write"><span data-i18n="viewName">视图名称</span><input id="savedViewNameInput" type="text" data-i18n-placeholder="viewNamePlaceholder" placeholder="例如：待审核安全 Skills" /></label>
+                    <div class="inline-actions">
+                      <button id="applySavedViewButton" class="button ghost compact" type="button" data-i18n="applyView">应用视图</button>
+                      <button id="saveCurrentViewButton" class="button primary compact desktop-setting-write" type="button" data-i18n="saveCurrentView">保存当前视图</button>
+                      <button id="deleteSavedViewButton" class="button danger-text compact desktop-setting-write" type="button" data-i18n="deleteView">删除视图</button>
+                    </div>
+                  </section>
+
+                  <section class="settings-section category-settings-section">
+                    <h3 data-i18n="categorySettings">分类显示与个人分类</h3>
+                    <div class="compact-form desktop-setting-write">
+                      <label><span data-i18n="categorySlug">个人分类 ID</span><input id="customCategorySlugInput" type="text" placeholder="team-tools" /></label>
+                      <label><span data-i18n="chineseName">中文名</span><input id="customCategoryZhInput" type="text" /></label>
+                      <label><span data-i18n="englishName">英文名</span><input id="customCategoryEnInput" type="text" /></label>
+                      <button id="createCustomCategoryButton" class="button ghost compact" type="button" data-i18n="createCategory">创建个人分类</button>
+                    </div>
+                    <div id="categorySettingsList" class="category-settings-list"></div>
+                  </section>
+                </div>
+              </article>
+
+              <article class="management-card full-span">
+                <div class="card-heading">
+                  <div><p class="eyebrow">MODEL REVIEW</p><h2 data-i18n="stagedSuggestions">建议暂存区</h2></div>
+                  <div class="inline-actions">
+                    <button id="refreshSuggestionsButton" class="button ghost compact" type="button" data-i18n="refresh">刷新</button>
+                    <button id="acceptSuggestionsButton" class="button primary compact" type="button" data-i18n="acceptSelected">接受所选</button>
+                    <button id="rejectSuggestionsButton" class="button ghost compact" type="button" data-i18n="rejectSelected">拒绝所选</button>
+                  </div>
+                </div>
+                <p class="boundary-note" data-i18n="suggestionBoundaryLong">这里只保存模型判断的名称、description、来源、已有 category、理由与置信度；锁定项不能接受建议。</p>
+                <div id="suggestionsList" class="management-list"></div>
+              </article>
+
+              <article class="management-card">
+                <div class="card-heading">
+                  <div><p class="eyebrow">VERIFIED EVIDENCE</p><h2 data-i18n="updateEvidence">更新证据</h2></div>
+                  <button id="checkUpdatesButton" class="button primary compact" type="button" data-i18n="checkSelectedUpdates">检查清单中所选实例</button>
+                </div>
+                <p class="boundary-note" data-i18n="updateBoundary">每次点击都强制刷新，仅访问已验证的公开 GitHub/Codex 来源，不下载 Skill 正文，也不执行更新。</p>
+                <div id="updateEvidenceList" class="management-list compact-list"></div>
+              </article>
+
+              <article class="management-card">
+                <div class="card-heading">
+                  <div><p class="eyebrow">TAG HYGIENE</p><h2 data-i18n="tagManagement">标签管理</h2></div>
+                </div>
+                <p class="boundary-note" data-i18n="tagBoundary">仅管理个人标签。锁定项自动排除；单批最多 100 项，失败即停止。</p>
+                <div class="tag-manager">
+                  <label><span data-i18n="sourceTag">来源标签</span><select id="tagManagerSource"></select></label>
+                  <label><span data-i18n="targetTag">目标标签</span><input id="tagManagerTarget" type="text" data-i18n-placeholder="targetTagPlaceholder" placeholder="新标签名" /></label>
+                  <div class="inline-actions">
+                    <button id="renameTagButton" class="button primary compact" type="button" data-i18n="renameOrMerge">重命名 / 合并</button>
+                    <button id="deleteTagButton" class="button danger-text compact" type="button" data-i18n="deleteTag">删除标签</button>
+                  </div>
+                  <p id="tagManagerSummary" class="source-meta"></p>
+                </div>
+              </article>
+
+              <article class="management-card full-span">
+                <div class="card-heading">
+                  <div><p class="eyebrow">REVERSIBLE QUARANTINE</p><h2 data-i18n="quarantine">可恢复隔离</h2></div>
+                  <div class="inline-actions">
+                    <button id="confirmInstallationUnitsButton" class="button ghost compact" type="button" data-i18n="confirmSelectedBoundaries">确认所选管理边界</button>
+                    <button id="prepareQuarantineButton" class="button ghost compact" type="button" data-i18n="prepareSelectedPlan">为所选候选生成计划</button>
+                  </div>
+                </div>
+                <p class="boundary-note warning-note" data-i18n="quarantineBoundary">此页先确认安装边界，再生成影响计划。只有桌面工作台、管理模式开启且计划可执行时，才会出现实际隔离确认；路径冲突时恢复会停止，绝不覆盖。</p>
+                <div class="split-management-list">
+                  <section>
+                    <h3 data-i18n="installationCandidates">安装单元候选</h3>
+                    <div id="quarantineCandidates" class="management-list compact-list"></div>
+                  </section>
+                  <section>
+                    <h3 data-i18n="plansAndRecords">计划与隔离记录</h3>
+                    <div id="quarantinePlans" class="management-list compact-list"></div>
+                    <div id="quarantineEntries" class="management-list compact-list"></div>
+                  </section>
+                </div>
+              </article>
+
+              <article class="management-card full-span data-boundary-card">
+                <p class="eyebrow">0.2 DATA START</p>
+                <h2 data-i18n="legacyState">旧版状态不会迁移</h2>
+                <p data-i18n="legacyStateNote">0.2.0 从空 SQLite 开始。0.1.1 的 JSON 状态文件只读保留；本界面不提供旧 JSON 导入，也不会暗示已迁移。</p>
+              </article>
+            </div>
+          </section>
+        </main>
+      </div>
+
+      <footer class="statusbar">
+        <span id="saveStatus" data-i18n="notWritten">尚未写入本机分类数据</span>
+        <span id="generatedAt"></span>
+      </footer>
+    </div>
+
+    <aside id="detailDrawer" class="detail-drawer" aria-labelledby="drawerTitle" aria-hidden="true">
+      <div class="drawer-header">
+        <div><p class="eyebrow">LOGICAL SKILL DETAIL</p><h2 id="drawerTitle" data-i18n="skillDetail">Skill 详情</h2></div>
+        <button id="closeDrawer" class="icon-button" type="button" aria-label="Close">×</button>
+      </div>
+      <div id="drawerContent" class="drawer-content"></div>
+    </aside>
+    <div id="drawerBackdrop" class="drawer-backdrop" hidden></div>
+
+    <dialog id="diagnosticsDialog">
+      <form method="dialog" class="dialog-card wide">
+        <p class="eyebrow">REDACTED DIAGNOSTICS</p>
+        <h2 data-i18n="diagnostics">诊断</h2>
+        <p class="boundary-note" data-i18n="diagnosticsBoundary">默认诊断隐藏用户名、绝对路径和原始 stderr。</p>
+        <pre id="diagnosticsContent"></pre>
+        <p class="boundary-note warning-note" data-i18n="supportBundleBoundary">完整支持包会包含用户名、绝对路径和原始 stderr；只有明确二次确认后才在本机生成。</p>
+        <section id="supportBundleResult" class="support-bundle-result" aria-labelledby="supportBundleResultTitle" tabindex="-1" hidden>
+          <h3 id="supportBundleResultTitle" data-i18n="supportBundleCreated">完整支持包已生成</h3>
+          <dl>
+            <div><dt data-i18n="fileName">文件名</dt><dd id="supportBundleFileName"></dd></div>
+            <div><dt data-i18n="fileSize">大小</dt><dd id="supportBundleSize"></dd></div>
+            <div><dt>SHA-256</dt><dd id="supportBundleSha"></dd></div>
+          </dl>
+        </section>
+        <div class="dialog-actions">
+          <button id="pluginManagementButton" type="button" class="button ghost" data-i18n="openPluginManagement">打开 Codex 插件管理</button>
+          <button id="supportBundleButton" type="button" class="button ghost" data-i18n="createSupportBundle">生成完整支持包</button>
+          <button type="submit" value="close" class="button primary" data-i18n="close">关闭</button>
+        </div>
+      </form>
+    </dialog>
+
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+    <script src="/app.js" defer></script>
+  </body>
+</html>

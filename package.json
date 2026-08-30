@@ -1,0 +1,47 @@
+{
+  "name": "codex-skill-organizer",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "Local-first classification, organization, and safe management workbench for Codex skills.",
+  "license": "MIT",
+  "author": "lx",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lingxuanqjc-alt/codex-skill-organizer.git"
+  },
+  "homepage": "https://github.com/lingxuanqjc-alt/codex-skill-organizer#readme",
+  "bugs": {
+    "url": "https://github.com/lingxuanqjc-alt/codex-skill-organizer/issues"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "build:desktop": "node scripts/build-icon.mjs && dotnet publish desktop/SkillOrganizerForCodex.Desktop.csproj -c Release -p:Platform=x64 -r win-x64 --self-contained true",
+    "build:release": "pwsh -NoProfile -File scripts/release/Build-Release.ps1",
+    "check": "npm run check:version && npm run check:security && npm run typecheck && npm test && npm run build",
+    "check:security": "node scripts/security-gate.mjs --repository-root . --plugin-root plugin/plugins/codex-skill-organizer --marketplace-root plugin",
+    "check:version": "node scripts/version-contract.mjs --check",
+    "dev": "tsx src/server/main.ts",
+    "start": "node dist/server.mjs",
+    "test": "tsx --test --test-concurrency=4 tests/**/*.test.ts",
+    "test:browser": "playwright test",
+    "typecheck": "tsc --noEmit",
+    "version:sync": "node scripts/version-contract.mjs --write"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/ext-apps": "1.7.5",
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "yaml": "2.9.0",
+    "zod": "4.5.2"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.1",
+    "@types/node": "24.13.3",
+    "esbuild": "0.28.2",
+    "tsx": "4.23.12",
+    "typescript": "7.0.2"
+  }
+}

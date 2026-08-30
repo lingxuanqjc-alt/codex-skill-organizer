@@ -1,0 +1,41 @@
+{
+  "name": "codex-skill-organizer",
+  "version": "0.2.0",
+  "description": "Local-first classification, organization, update evidence, and recoverable management for Codex skills.",
+  "author": {
+    "name": "lx",
+    "url": "https://github.com/lingxuanqjc-alt"
+  },
+  "homepage": "https://github.com/lingxuanqjc-alt/codex-skill-organizer",
+  "repository": "https://github.com/lingxuanqjc-alt/codex-skill-organizer",
+  "license": "MIT",
+  "keywords": [
+    "codex",
+    "skills",
+    "classification",
+    "local-first"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Skill Organizer for Codex",
+    "shortDescription": "分类、整理并安全管理本机 Codex Skills。",
+    "longDescription": "在本地工作台中聚合不同来源的 Skills，提供双语分类、标签、更新证据及可恢复管理；不会改写第三方 SKILL.md。",
+    "developerName": "lx",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/lingxuanqjc-alt/codex-skill-organizer",
+    "privacyPolicyURL": "https://github.com/lingxuanqjc-alt/codex-skill-organizer/blob/main/PRIVACY.md",
+    "defaultPrompt": [
+      "打开 Skill Organizer，展示概览和待整理项。",
+      "列出同名但来源不同的 Skills，不要合并它们。",
+      "为待整理 Skills 生成分类建议，先不要应用。"
+    ],
+    "brandColor": "#2563EB",
+    "composerIcon": "./assets/skill-organizer.svg",
+    "logo": "./assets/skill-organizer.svg"
+  }
+}

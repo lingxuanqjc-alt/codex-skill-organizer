@@ -1,0 +1,37 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:sys="clr-namespace:System;assembly=System.Runtime">
+  <SolidColorBrush x:Key="WindowBackgroundBrush" Color="{DynamicResource {x:Static SystemColors.WindowColorKey}}" />
+  <SolidColorBrush x:Key="SecondaryTextBrush" Color="{DynamicResource {x:Static SystemColors.GrayTextColorKey}}" />
+  <sys:String x:Key="WindowTitle">Skill Organizer for Codex</sys:String>
+  <sys:String x:Key="WorkbenchAccessibleName">Skill inventory and management workbench</sys:String>
+  <sys:String x:Key="LoadingTitle">Starting Skill Organizer</sys:String>
+  <sys:String x:Key="LoadingDetail">Connecting to the local service and verifying protocol compatibility…</sys:String>
+  <sys:String x:Key="RetryButton">Retry</sys:String>
+  <sys:String x:Key="OpenInBrowserButton">Open in browser</sys:String>
+  <sys:String x:Key="LaunchFailed">Skill Organizer could not start</sys:String>
+  <sys:String x:Key="LaunchFailureFormat">Skill Organizer could not start: {0}</sys:String>
+  <sys:String x:Key="ActivationFailed">The existing window could not be activated. Wait a moment and try again.</sys:String>
+  <sys:String x:Key="ProtocolMismatchTitle">Restart required</sys:String>
+  <sys:String x:Key="BrowserFallbackTitle">Using your default browser</sys:String>
+  <sys:String x:Key="BrowserFallbackForced">The embedded browser is disabled for this development run.</sys:String>
+  <sys:String x:Key="WebViewFallbackFormat">The WebView2 runtime is unavailable or could not initialize. Install the Microsoft Edge WebView2 Runtime and retry; until then, the workbench has opened in your default browser. Details: {0}</sys:String>
+  <sys:String x:Key="TrayShow">Show workbench</sys:String>
+  <sys:String x:Key="TrayRescan">Rescan skills</sys:String>
+  <sys:String x:Key="TrayManagement">Management mode</sys:String>
+  <sys:String x:Key="TrayStartupSettings">Launch at sign-in settings</sys:String>
+  <sys:String x:Key="TrayExit">Exit</sys:String>
+  <sys:String x:Key="InvalidNodeOverride">CSO_NODE_PATH must name an existing absolute node.exe path.</sys:String>
+  <sys:String x:Key="NoInstallLayout">The fixed runtime or built service was not found. Reinstall Skill Organizer or run the release health check.</sys:String>
+  <sys:String x:Key="InvalidCurrentPointer">current.json is invalid or points outside the product directory.</sys:String>
+  <sys:String x:Key="CurrentVersionMissing">The active Skill Organizer version is missing. Run the installer repair or rollback.</sys:String>
+  <sys:String x:Key="MissingMcpSidecar">The packaged MCP sidecar is missing.</sys:String>
+  <sys:String x:Key="McpStartFailed">The packaged MCP sidecar could not be started.</sys:String>
+  <sys:String x:Key="ServiceStartFailed">The packaged local service could not be started.</sys:String>
+  <sys:String x:Key="ServiceExitedFormat">The local service exited before it became ready (exit code {0}).</sys:String>
+  <sys:String x:Key="ServiceTimeout">The local service did not become healthy within 45 seconds.</sys:String>
+  <sys:String x:Key="ProtocolMismatchFormat">A local service using protocol {0} is already running. This desktop supports {1}. Restart Codex and Skill Organizer before making changes.</sys:String>
+  <sys:String x:Key="CodexCliMissing">Codex CLI was not found in an explicit or known host location. Plugin installation remains pending.</sys:String>
+  <sys:String x:Key="PluginInstallFailed">Codex could not complete the optional plugin installation. Desktop installation is unaffected.</sys:String>
+  <sys:String x:Key="NavigationFailedFormat">The embedded workbench could not finish loading ({0}). You can retry or open it in your browser.</sys:String>
+</ResourceDictionary>

@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "platform": "win-x64",
+  "version": "24.18.0",
+  "archiveName": "node-v24.18.0-win-x64.zip",
+  "url": "https://nodejs.org/dist/v24.18.0/node-v24.18.0-win-x64.zip",
+  "archiveSha256": "0ae68406b42d7725661da979b1403ec9926da205c6770827f33aac9d8f26e821",
+  "nodeExeSha256": "9a4eb5f1c29c6a2e93852ead46b999e284a6a5ca8bab4d4e241d587d025a52de",
+  "licenseSha256": "d9c4eeda951d6d08f4aa1316b61aafcf67e6da5f79b18f8edeb56fa6abdc038c",
+  "npmVersion": "11.16.0",
+  "npmCmdSha256": "21b46c69ad6e2f231f02a9e120f4ba6c8e75fef5a45637103002eab99f888ab8",
+  "npmCliSha256": "3ce7cba6f5128dd5f54c98b6a5036b0f850496878cc2e21044b675fe3c594e3e"
+}

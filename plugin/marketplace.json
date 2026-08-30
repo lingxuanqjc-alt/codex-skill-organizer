@@ -1,0 +1,20 @@
+{
+  "name": "skill-organizer-for-codex",
+  "interface": {
+    "displayName": "Skill Organizer for Codex"
+  },
+  "plugins": [
+    {
+      "name": "codex-skill-organizer",
+      "source": {
+        "source": "local",
+        "path": "./plugins/codex-skill-organizer"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

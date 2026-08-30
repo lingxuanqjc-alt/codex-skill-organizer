@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
+  <title id="title">Skill Organizer for Codex</title>
+  <desc id="desc">A blue folder containing a four-part classification grid.</desc>
+  <defs>
+    <linearGradient id="folder" x1="36" y1="40" x2="220" y2="220" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#60A5FA"/>
+      <stop offset="1" stop-color="#2563EB"/>
+    </linearGradient>
+  </defs>
+  <path fill="url(#folder)" d="M28 70c0-13 11-24 24-24h55l23 25h74c13 0 24 11 24 24v105c0 13-11 24-24 24H52c-13 0-24-11-24-24V70Z"/>
+  <path fill="#BFDBFE" d="M28 91h200v20H28z" opacity=".72"/>
+  <rect x="68" y="119" width="120" height="82" rx="18" fill="#EFF6FF"/>
+  <rect x="88" y="138" width="34" height="18" rx="6" fill="#1D4ED8"/>
+  <rect x="134" y="138" width="34" height="18" rx="6" fill="#38BDF8"/>
+  <rect x="88" y="168" width="34" height="18" rx="6" fill="#14B8A6"/>
+  <rect x="134" y="168" width="34" height="18" rx="6" fill="#8B5CF6"/>
+</svg>

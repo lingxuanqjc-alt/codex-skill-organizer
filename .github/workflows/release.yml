@@ -1,0 +1,583 @@
+name: Release snapshot
+
+on:
+  push:
+    tags: ['v0.2.*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Semver without the v prefix
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-smoke:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Require a release tag to belong to main history
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          git show-ref --verify --quiet refs/remotes/origin/main
+          if ($LASTEXITCODE -ne 0) { throw 'The checkout does not contain origin/main.' }
+          git merge-base --is-ancestor $env:GITHUB_SHA refs/remotes/origin/main
+          if ($LASTEXITCODE -eq 1) { throw 'Release tag commit is not part of origin/main history.' }
+          if ($LASTEXITCODE -ne 0) { throw "Unable to verify release tag ancestry (git exit $LASTEXITCODE)." }
+
+      - name: Set up pinned Node.js for the build only
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.18.0'
+          cache: npm
+
+      - name: Set up pinned .NET SDK
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+        with:
+          global-json-file: global.json
+
+      - name: Resolve release inputs
+        id: release
+        shell: pwsh
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          $version = $env:INPUT_VERSION
+          if (-not $version) {
+            if (-not $env:GITHUB_REF_NAME.StartsWith('v')) { throw 'Release tag must start with v.' }
+            $version = $env:GITHUB_REF_NAME.Substring(1)
+          }
+          if ($version -notmatch '^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?$') {
+            throw "Invalid release version: $version"
+          }
+          $runtime = Get-Content -LiteralPath scripts/release/runtime-lock.json -Raw | ConvertFrom-Json
+          if ($runtime.schemaVersion -ne 1 -or $runtime.url -notmatch '^https://nodejs\.org/' -or
+              $runtime.archiveSha256 -notmatch '^[0-9a-f]{64}$') {
+            throw 'scripts/release/runtime-lock.json is invalid.'
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "node_url=$($runtime.url)" >> $env:GITHUB_OUTPUT
+          "node_sha256=$($runtime.archiveSha256)" >> $env:GITHUB_OUTPUT
+
+      - name: Install and verify source
+        shell: pwsh
+        run: |
+          npm ci
+          if ($LASTEXITCODE -ne 0) { throw 'npm ci failed.' }
+          npm run check
+          if ($LASTEXITCODE -ne 0) { throw 'npm run check failed.' }
+          npx playwright install chromium
+          if ($LASTEXITCODE -ne 0) { throw 'Playwright Chromium install failed.' }
+          npm run test:browser
+          if ($LASTEXITCODE -ne 0) { throw 'Workbench browser contract failed.' }
+          ./scripts/release/Test-ReleaseScaffold.ps1
+
+      - name: Audit production dependency severities again for the tag
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Publish self-contained desktop payload
+        shell: pwsh
+        run: |
+          node scripts/build-icon.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Original ICO generation failed.' }
+          $version = '${{ steps.release.outputs.version }}'
+          if ($version -notmatch '^(\d+)\.(\d+)\.(\d+)') { throw "Invalid release version: $version" }
+          $assemblyVersion = "$($Matches[1]).$($Matches[2]).$($Matches[3]).0"
+          dotnet publish desktop/SkillOrganizerForCodex.Desktop.csproj `
+            -c Release -p:Platform=x64 -r win-x64 --self-contained true `
+            -p:PublishSingleFile=true `
+            "-p:Version=$version" `
+            "-p:AssemblyVersion=$assemblyVersion" `
+            "-p:FileVersion=$assemblyVersion" `
+            -o artifacts/desktop
+          if ($LASTEXITCODE -ne 0) { throw 'Desktop publish failed.' }
+
+      - name: Verify byte-identical desktop publish across absolute paths
+        shell: pwsh
+        run: ./scripts/release/Test-DeterministicDesktopPublish.ps1
+
+      - name: Download and verify pinned Node.js runtime
+        id: runtime
+        shell: pwsh
+        env:
+          NODE_URL: ${{ steps.release.outputs.node_url }}
+          NODE_SHA256: ${{ steps.release.outputs.node_sha256 }}
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP 'node-runtime.zip'
+          Invoke-WebRequest -Uri $env:NODE_URL -OutFile $archive
+          $actual = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $env:NODE_SHA256) { throw "Node runtime checksum mismatch: $actual" }
+          $expanded = Join-Path $env:RUNNER_TEMP 'node-runtime'
+          Expand-Archive -LiteralPath $archive -DestinationPath $expanded
+          $roots = @(Get-ChildItem -LiteralPath $expanded -Filter node.exe -File -Recurse | Where-Object {
+            Test-Path -LiteralPath (Join-Path $_.Directory.FullName 'LICENSE') -PathType Leaf
+          } | Select-Object -ExpandProperty DirectoryName -Unique)
+          if ($roots.Count -ne 1) { throw 'Pinned Node archive must contain exactly one runtime root.' }
+          "root=$($roots[0])" >> $env:GITHUB_OUTPUT
+
+      - name: Locate Inno Setup compiler
+        id: inno
+        shell: pwsh
+        run: |
+          $paths = @(
+            'C:\Program Files (x86)\Inno Setup 6\ISCC.exe',
+            'C:\Program Files\Inno Setup 6\ISCC.exe'
+          )
+          $compiler = $paths | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+          if (-not $compiler) { throw 'Inno Setup 6 is not present on the runner image.' }
+          "path=$compiler" >> $env:GITHUB_OUTPUT
+
+      - name: Assemble signed-by-checksum release inputs
+        shell: pwsh
+        run: |
+          ./scripts/release/Build-Release.ps1 `
+            -Version '${{ steps.release.outputs.version }}' `
+            -DesktopPayloadDirectory artifacts/desktop `
+            -NodeRuntimeDirectory '${{ steps.runtime.outputs.root }}' `
+            -IsccPath '${{ steps.inno.outputs.path }}' `
+            -OutputDirectory "artifacts/release/${{ steps.release.outputs.version }}" `
+            -SkipProjectCheck
+
+      - name: Publish deterministic failing-health upgrade fixture
+        id: rollback_fixture
+        shell: pwsh
+        run: |
+          $fixtureRoot = Join-Path $env:RUNNER_TEMP 'cso-failing-health-fixture'
+          dotnet publish installer/TestFixtures/FailingHealthCheck/FailingHealthCheck.csproj `
+            -c Release -r win-x64 --self-contained false -o $fixtureRoot
+          if ($LASTEXITCODE -ne 0) { throw 'Failing-health upgrade fixture publish failed.' }
+          & (Join-Path $fixtureRoot 'SkillOrganizerForCodex.exe') --health-check
+          if ($LASTEXITCODE -ne 71) { throw 'Failing-health fixture did not return its deterministic exit code.' }
+          "root=$fixtureRoot" >> $env:GITHUB_OUTPUT
+
+      - name: Verify installer and portable contents on a clean runner
+        shell: pwsh
+        run: |
+          $env:PATH = (($env:PATH -split ';') | Where-Object {
+            $_ -and $_ -notmatch '(?i)hostedtoolcache\\windows\\node|\\nodejs(?:\\|$)'
+          }) -join ';'
+          if (Get-Command node.exe -ErrorAction SilentlyContinue) {
+            throw 'Installer smoke must not be able to resolve Node.js from PATH.'
+          }
+          $version = '${{ steps.release.outputs.version }}'
+          $releaseRoot = [System.IO.Path]::GetFullPath("artifacts/release/$version")
+          $setup = Join-Path $releaseRoot "SkillOrganizerForCodex-$version-win-x64-setup.exe"
+          $portableZip = Join-Path $releaseRoot "SkillOrganizerForCodex-$version-win-x64-portable.zip"
+          $installArgs = '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /TYPE=desktop /COMPONENTS=workbench'
+          $process = Start-Process -FilePath $setup -ArgumentList $installArgs -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Installer smoke failed: $($process.ExitCode)" }
+          $productRoot = Join-Path $env:LOCALAPPDATA 'Programs\SkillOrganizerForCodex'
+          $versionRoot = Join-Path $productRoot "versions\$version"
+          & (Join-Path $productRoot 'SkillOrganizerForCodex.exe') --health-check
+          if ($LASTEXITCODE -ne 0) { throw 'Installed health check failed.' }
+          ./scripts/release/New-ContentManifest.ps1 -Root $versionRoot -OutputPath "$env:RUNNER_TEMP/installed-manifest.json" | Out-Null
+          ./scripts/release/Compare-ContentManifest.ps1 `
+            -ReferenceManifest (Join-Path $releaseRoot "CONTENT-MANIFEST-version-$version.json") `
+            -CandidateManifest "$env:RUNNER_TEMP/installed-manifest.json"
+
+          function Get-FileSnapshot([string[]]$paths) {
+            return (@($paths | ForEach-Object {
+              if (Test-Path -LiteralPath $_ -PathType Leaf) {
+                "$_|$((Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash)"
+              } else {
+                "$_|<missing>"
+              }
+            } | Sort-Object) -join "`n")
+          }
+          function Get-UninstallerSnapshot([string]$root) {
+            return (@(Get-ChildItem -LiteralPath $root -Filter 'unins*' -File -ErrorAction SilentlyContinue |
+              Sort-Object -Property Name |
+              ForEach-Object { "$($_.Name)|$((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash)" }) -join "`n")
+          }
+          function Assert-LogCount([string]$text, [string]$needle, [int]$expected) {
+            $actual = [regex]::Matches($text, [regex]::Escape($needle)).Count
+            if ($actual -ne $expected) { throw "Expected '$needle' $expected time(s) in setup log, got $actual." }
+          }
+          function Export-UninstallRegistration([string]$path) {
+            Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+            & "$env:SystemRoot/System32/reg.exe" export `
+              'HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\{A8D9081E-C5DB-4B48-A772-574427CA3A27}_is1' `
+              $path /y | Out-Null
+            if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $path -PathType Leaf)) {
+              throw 'Unable to export the Organizer uninstall registration for rollback comparison.'
+            }
+            return (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
+          }
+
+          $stableLauncher = Join-Path $productRoot 'SkillOrganizerForCodex.exe'
+          $currentPointer = Join-Path $productRoot 'current.json'
+          & $stableLauncher --headless --ensure-service
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to seed the installed SQLite database for upgrade-backup smoke.' }
+          & $stableLauncher --shutdown-for-maintenance
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to stop the seeded backend before upgrade smoke.' }
+          $dataRoot = Join-Path $env:LOCALAPPDATA 'SkillOrganizerForCodex'
+          if (-not (Test-Path -LiteralPath (Join-Path $dataRoot 'organizer.db') -PathType Leaf)) {
+            throw 'Upgrade smoke did not create organizer.db.'
+          }
+          $backupRoot = Join-Path $dataRoot 'upgrade-backups'
+          $backupCountBeforeFault = @(Get-ChildItem -LiteralPath $backupRoot -Filter '*.sqlite' -File -ErrorAction SilentlyContinue).Count
+          $stableHashBeforeFault = (Get-FileHash -LiteralPath $stableLauncher -Algorithm SHA256).Hash
+          $currentPointerBeforeFault = [Convert]::ToBase64String([IO.File]::ReadAllBytes($currentPointer))
+          $versionManifestBeforeFault = Join-Path $env:RUNNER_TEMP 'version-before-fault.json'
+          ./scripts/release/New-ContentManifest.ps1 -Root $versionRoot -OutputPath $versionManifestBeforeFault | Out-Null
+          $shortcutPaths = @(
+            (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Skill Organizer for Codex.lnk'),
+            (Join-Path ([Environment]::GetFolderPath('DesktopDirectory')) 'Skill Organizer for Codex.lnk'),
+            (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Startup\Skill Organizer for Codex.lnk')
+          )
+          $shortcutSnapshotBeforeFault = Get-FileSnapshot $shortcutPaths
+          $uninstallerSnapshotBeforeFault = Get-UninstallerSnapshot $productRoot
+          $uninstallRegistryBeforeFault = Export-UninstallRegistration (Join-Path $env:RUNNER_TEMP 'uninstall-before-fault.reg')
+          $personalMarketplace = Join-Path $env:USERPROFILE '.agents\plugins\marketplace.json'
+          $marketplaceSnapshotBeforeFault = Get-FileSnapshot @($personalMarketplace)
+          $personalPlugin = Join-Path $env:USERPROFILE 'plugins\codex-skill-organizer'
+          if (Test-Path -LiteralPath $personalPlugin) { throw 'Clean-runner desktop-only smoke unexpectedly has an Organizer plugin directory.' }
+          $versionMatch = [regex]::Match($version, '^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)')
+          if (-not $versionMatch.Success) { throw "Release version is not semver: $version" }
+          $faultVersion = "$($versionMatch.Groups[1].Value).$($versionMatch.Groups[2].Value).$([int]$versionMatch.Groups[3].Value + 1)-health-failure-fixture"
+          $faultPayload = Join-Path $env:RUNNER_TEMP 'cso-failing-upgrade-payload'
+          New-Item -ItemType Directory -Path $faultPayload -Force | Out-Null
+          Get-ChildItem -LiteralPath $versionRoot -Force | ForEach-Object {
+            Copy-Item -LiteralPath $_.FullName -Destination $faultPayload -Recurse -Force
+          }
+          Get-ChildItem -LiteralPath '${{ steps.rollback_fixture.outputs.root }}' -Force | ForEach-Object {
+            Copy-Item -LiteralPath $_.FullName -Destination $faultPayload -Recurse -Force
+          }
+          & (Join-Path $faultPayload 'SkillOrganizerForCodex.exe') --health-check
+          if ($LASTEXITCODE -ne 71) { throw 'Fault payload does not fail health deterministically.' }
+
+          $faultOutput = Join-Path $env:RUNNER_TEMP 'cso-failing-upgrade-installer'
+          New-Item -ItemType Directory -Path $faultOutput -Force | Out-Null
+          $pluginRoot = [IO.Path]::GetFullPath('plugin/plugins/codex-skill-organizer')
+          $helperPath = [IO.Path]::GetFullPath('installer/tools/manage-personal-marketplace.mjs')
+          $licensePath = [IO.Path]::GetFullPath('LICENSE')
+          $iconPath = [IO.Path]::GetFullPath('desktop/Assets/app.ico')
+          $installerSource = [IO.Path]::GetFullPath('installer/SkillOrganizerForCodex.iss')
+          & '${{ steps.inno.outputs.path }}' `
+            "/DAppVersion=$faultVersion" `
+            "/DVersionPayloadRoot=$faultPayload" `
+            "/DPluginSourceRoot=$pluginRoot" `
+            "/DMarketplaceHelperSource=$helperPath" `
+            "/DLicenseFile=$licensePath" `
+            "/DSetupIconFileSource=$iconPath" `
+            "/DOutputDirectory=$faultOutput" `
+            $installerSource
+          if ($LASTEXITCODE -ne 0) { throw 'Failing-health upgrade installer compilation failed.' }
+          $faultSetup = Join-Path $faultOutput "SkillOrganizerForCodex-$faultVersion-win-x64-setup.exe"
+          $faultLog = Join-Path $env:RUNNER_TEMP 'cso-preflight-health-failure.log'
+          $faultInstallArgs = "$installArgs /LOG=`"$faultLog`""
+          $faultProcess = Start-Process -FilePath $faultSetup -ArgumentList $faultInstallArgs -Wait -PassThru
+          if ($faultProcess.ExitCode -ne 7) { throw "A failing-health preflight returned $($faultProcess.ExitCode), expected Inno exit 7." }
+          $faultLogText = Get-Content -LiteralPath $faultLog -Raw
+          Assert-LogCount $faultLogText 'Extracted and verified the bundled preflight payload.' 1
+          Assert-LogCount $faultLogText 'Completed the verified SQLite upgrade backup preflight.' 1
+          Assert-LogCount $faultLogText 'Completed the exact-version health preflight.' 0
+          Assert-LogCount $faultLogText 'Installer preflight failed:' 1
+          Assert-LogCount $faultLogText 'Starting the installation process' 0
+          $backupCountAfterFault = @(Get-ChildItem -LiteralPath $backupRoot -Filter '*.sqlite' -File).Count
+          if ($backupCountAfterFault -ne ($backupCountBeforeFault + 1)) {
+            throw 'A single failing-health preflight did not create exactly one verified database snapshot.'
+          }
+          if ((Get-FileHash -LiteralPath $stableLauncher -Algorithm SHA256).Hash -ne $stableHashBeforeFault) {
+            throw 'Preflight failure changed the stable launcher.'
+          }
+          if ([Convert]::ToBase64String([IO.File]::ReadAllBytes($currentPointer)) -ne $currentPointerBeforeFault) {
+            throw 'Preflight failure changed current.json.'
+          }
+          if (Test-Path -LiteralPath (Join-Path $productRoot "versions/$faultVersion")) {
+            throw 'Preflight failure entered the normal file-copy stage.'
+          }
+          ./scripts/release/New-ContentManifest.ps1 -Root $versionRoot -OutputPath "$env:RUNNER_TEMP/installed-after-fault-manifest.json" | Out-Null
+          ./scripts/release/Compare-ContentManifest.ps1 `
+            -ReferenceManifest $versionManifestBeforeFault `
+            -CandidateManifest "$env:RUNNER_TEMP/installed-after-fault-manifest.json"
+          if ((Get-FileSnapshot $shortcutPaths) -ne $shortcutSnapshotBeforeFault) { throw 'Preflight failure changed a shortcut.' }
+          if ((Get-UninstallerSnapshot $productRoot) -ne $uninstallerSnapshotBeforeFault) { throw 'Preflight failure changed uninstall artifacts.' }
+          if ((Export-UninstallRegistration (Join-Path $env:RUNNER_TEMP 'uninstall-after-preflight-fault.reg')) -ne $uninstallRegistryBeforeFault) {
+            throw 'Preflight failure changed the Windows uninstall registration.'
+          }
+          if ((Get-FileSnapshot @($personalMarketplace)) -ne $marketplaceSnapshotBeforeFault -or
+              (Test-Path -LiteralPath $personalPlugin)) {
+            throw 'Preflight failure changed the optional plugin or personal marketplace.'
+          }
+          & $stableLauncher --health-check
+          if ($LASTEXITCODE -ne 0) { throw 'Previous version was unhealthy after the failed upgrade rollback.' }
+
+          $payloadRoot = [IO.Path]::GetFullPath("artifacts/work/$version/version-payload")
+          ./installer/TestFixtures/InstallerMatrix/Invoke-InstallerMatrix.ps1 `
+            -Mode Transaction `
+            -Version $version `
+            -SetupPath $setup `
+            -IsccPath '${{ steps.inno.outputs.path }}' `
+            -VersionPayloadRoot $payloadRoot `
+            -PluginSourceRoot $pluginRoot `
+            -MarketplaceHelperSource $helperPath `
+            -LicenseFile $licensePath `
+            -SetupIconFileSource $iconPath `
+            -InstallerSource $installerSource
+
+          New-Item -ItemType Directory -Path $dataRoot -Force | Out-Null
+          Set-Content -LiteralPath (Join-Path $dataRoot 'preserve-check.txt') -Value 'preserve'
+          $uninstaller = Join-Path $productRoot 'unins000.exe'
+          $process = Start-Process -FilePath $uninstaller -ArgumentList '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART' -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Default uninstall failed: $($process.ExitCode)" }
+          if (-not (Test-Path -LiteralPath (Join-Path $dataRoot 'preserve-check.txt'))) { throw 'Default uninstall deleted user data.' }
+
+          $marketplacePath = Join-Path $env:USERPROFILE '.agents\plugins\marketplace.json'
+          New-Item -ItemType Directory -Path (Split-Path -Parent $marketplacePath) -Force | Out-Null
+          $marketplaceFixture = @{
+            name = 'personal'
+            interface = @{ displayName = 'Personal' }
+            plugins = @(@{
+              name = 'unrelated-plugin'
+              source = @{ source = 'local'; path = './plugins/unrelated-plugin' }
+              policy = @{ installation = 'AVAILABLE'; authentication = 'ON_USE' }
+              category = 'Other'
+            })
+          } | ConvertTo-Json -Depth 8
+          [System.IO.File]::WriteAllText($marketplacePath, $marketplaceFixture, [System.Text.UTF8Encoding]::new($false))
+          $pluginInstallArgs = '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /TYPE=full /COMPONENTS=workbench,codexplugin'
+          $process = Start-Process -FilePath $setup -ArgumentList $pluginInstallArgs -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Optional-plugin installer smoke failed: $($process.ExitCode)" }
+          ./scripts/release/New-ContentManifest.ps1 -Root $versionRoot -OutputPath "$env:RUNNER_TEMP/full-installed-manifest.json" | Out-Null
+          ./scripts/release/Compare-ContentManifest.ps1 `
+            -ReferenceManifest (Join-Path $releaseRoot "CONTENT-MANIFEST-version-full-$version.json") `
+            -CandidateManifest "$env:RUNNER_TEMP/full-installed-manifest.json"
+          $marketplace = Get-Content -LiteralPath $marketplacePath -Raw | ConvertFrom-Json
+          if (@($marketplace.plugins | Where-Object name -eq 'unrelated-plugin').Count -ne 1 -or
+              @($marketplace.plugins | Where-Object name -eq 'codex-skill-organizer').Count -ne 1) {
+            throw 'Optional-plugin install did not safely merge the personal marketplace.'
+          }
+          $uninstaller = Join-Path $productRoot 'unins000.exe'
+          $process = Start-Process -FilePath $uninstaller -ArgumentList '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART' -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Optional-plugin uninstall smoke failed: $($process.ExitCode)" }
+          $marketplace = Get-Content -LiteralPath $marketplacePath -Raw | ConvertFrom-Json
+          if (@($marketplace.plugins | Where-Object name -eq 'unrelated-plugin').Count -ne 1 -or
+              @($marketplace.plugins | Where-Object name -eq 'codex-skill-organizer').Count -ne 0) {
+            throw 'Optional-plugin uninstall changed an unrelated marketplace entry or retained Organizer.'
+          }
+
+          $process = Start-Process -FilePath $setup -ArgumentList $installArgs -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Reinstall before full-delete smoke failed: $($process.ExitCode)" }
+          $uninstaller = Join-Path $productRoot 'unins000.exe'
+          $process = Start-Process -FilePath $uninstaller -ArgumentList '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /PURGEDATA' -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Full-delete uninstall failed: $($process.ExitCode)" }
+          if (Test-Path -LiteralPath $dataRoot) { throw 'Explicit /PURGEDATA uninstall preserved the Organizer data root.' }
+          if (Test-Path -LiteralPath $productRoot) { throw 'Full-delete uninstall preserved the Organizer program root.' }
+
+          $marketplaceBeforeCleanFault = Get-FileSnapshot @($marketplacePath)
+          $cleanFaultLog = Join-Path $env:RUNNER_TEMP 'cso-clean-first-install-health-failure.log'
+          $cleanFaultArgs = "$installArgs /LOG=`"$cleanFaultLog`""
+          $cleanFaultProcess = Start-Process -FilePath $faultSetup -ArgumentList $cleanFaultArgs -Wait -PassThru
+          if ($cleanFaultProcess.ExitCode -ne 7) {
+            throw "A clean first-install health failure returned $($cleanFaultProcess.ExitCode), expected Inno exit 7."
+          }
+          $cleanFaultLogText = Get-Content -LiteralPath $cleanFaultLog -Raw
+          Assert-LogCount $cleanFaultLogText 'Installer preflight failed:' 1
+          Assert-LogCount $cleanFaultLogText 'Starting the installation process' 0
+          if (Test-Path -LiteralPath $productRoot) { throw 'Clean first-install preflight failure created the program root.' }
+          foreach ($shortcutPath in $shortcutPaths) {
+            if (Test-Path -LiteralPath $shortcutPath) { throw 'Clean first-install preflight failure created a shortcut.' }
+          }
+          & "$env:SystemRoot/System32/reg.exe" query `
+            'HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\{A8D9081E-C5DB-4B48-A772-574427CA3A27}_is1' 2>$null | Out-Null
+          if ($LASTEXITCODE -eq 0) { throw 'Clean first-install preflight failure created an uninstall registration.' }
+          if ((Get-FileSnapshot @($marketplacePath)) -ne $marketplaceBeforeCleanFault -or
+              (Test-Path -LiteralPath $personalPlugin)) {
+            throw 'Clean first-install preflight failure crossed the optional plugin boundary.'
+          }
+          $cleanFaultResultPath = Join-Path $dataRoot 'upgrade-backup-result.json'
+          if (-not (Test-Path -LiteralPath $cleanFaultResultPath -PathType Leaf)) {
+            throw 'Clean first-install preflight did not emit its auditable no-database backup result.'
+          }
+          $cleanFaultResult = Get-Content -LiteralPath $cleanFaultResultPath -Raw | ConvertFrom-Json
+          if ($cleanFaultResult.schemaVersion -ne 1 -or
+              $cleanFaultResult.version -ne $faultVersion -or
+              $cleanFaultResult.sourceExisted -ne $false -or
+              $null -ne $cleanFaultResult.backupRelativePath) {
+            throw 'Clean first-install preflight backup result did not describe the exact no-database fixture.'
+          }
+          $cleanFaultEntries = @(Get-ChildItem -LiteralPath $dataRoot -Force)
+          if ($cleanFaultEntries.Count -ne 1 -or
+              $cleanFaultEntries[0].FullName -ne $cleanFaultResultPath) {
+            throw 'Clean first-install preflight created unexpected persistent Organizer data.'
+          }
+          Remove-Item -LiteralPath $cleanFaultResultPath -Force
+          [IO.Directory]::Delete($dataRoot, $false)
+          if (Test-Path -LiteralPath $dataRoot) {
+            throw 'Clean first-install fixture could not restore the absent Organizer data root.'
+          }
+
+          ./installer/TestFixtures/InstallerMatrix/Invoke-InstallerMatrix.ps1 `
+            -Mode Selection `
+            -Version $version `
+            -SetupPath $setup `
+            -IsccPath '${{ steps.inno.outputs.path }}' `
+            -VersionPayloadRoot $payloadRoot `
+            -PluginSourceRoot $pluginRoot `
+            -MarketplaceHelperSource $helperPath `
+            -LicenseFile $licensePath `
+            -SetupIconFileSource $iconPath `
+            -InstallerSource $installerSource
+
+          $portableExtract = Join-Path $env:RUNNER_TEMP 'portable'
+          Expand-Archive -LiteralPath $portableZip -DestinationPath $portableExtract
+          $portableRoot = Get-ChildItem -LiteralPath $portableExtract -Directory | Select-Object -First 1 -ExpandProperty FullName
+          & (Join-Path $portableRoot 'SkillOrganizerForCodex.exe') --health-check
+          if ($LASTEXITCODE -ne 0) { throw 'Portable health check failed.' }
+          ./scripts/release/New-ContentManifest.ps1 -Root $portableRoot -OutputPath "$env:RUNNER_TEMP/portable-manifest.json" | Out-Null
+          ./scripts/release/Compare-ContentManifest.ps1 `
+            -ReferenceManifest (Join-Path $releaseRoot "CONTENT-MANIFEST-portable-$version.json") `
+            -CandidateManifest "$env:RUNNER_TEMP/portable-manifest.json"
+
+      - name: Verify complete release asset contract
+        shell: pwsh
+        run: |
+          ./scripts/release/Test-ReleaseOutput.ps1 `
+            -ReleaseDirectory "artifacts/release/${{ steps.release.outputs.version }}" `
+            -ExpectedVersion '${{ steps.release.outputs.version }}' `
+            -RequireInstaller
+
+      - name: Upload immutable snapshot artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: SkillOrganizerForCodex-${{ steps.release.outputs.version }}-windows-x64
+          path: artifacts/release/${{ steps.release.outputs.version }}/*
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Stage fixed release safety notes
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path artifacts/publish-notes -Force | Out-Null
+          Copy-Item -LiteralPath .github/RELEASE_NOTES.md -Destination artifacts/publish-notes/RELEASE_NOTES.md
+
+      - name: Upload fixed release safety notes
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: SkillOrganizerForCodex-${{ steps.release.outputs.version }}-release-notes
+          path: artifacts/publish-notes/RELEASE_NOTES.md
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    name: Publish verified GitHub release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build-and-smoke
+    runs-on: windows-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Download verified snapshot assets
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: SkillOrganizerForCodex-${{ needs.build-and-smoke.outputs.version }}-windows-x64
+          path: artifacts/release/${{ needs.build-and-smoke.outputs.version }}
+
+      - name: Download fixed release safety notes
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: SkillOrganizerForCodex-${{ needs.build-and-smoke.outputs.version }}-release-notes
+          path: artifacts/publish-notes
+
+      - name: Reverify downloaded release assets without executing repository code
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ needs.build-and-smoke.outputs.version }}
+        run: |
+          $version = $env:RELEASE_VERSION
+          if ($version -notmatch '^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?$') {
+            throw "Invalid downloaded release version: $version"
+          }
+          $releaseRoot = [System.IO.Path]::GetFullPath("artifacts/release/$version")
+          $expectedNames = @(
+            "CONTENT-MANIFEST-portable-$version.json",
+            "CONTENT-MANIFEST-version-$version.json",
+            "CONTENT-MANIFEST-version-full-$version.json",
+            'RELEASE-METADATA.json',
+            'SHA256SUMS.txt',
+            "SkillOrganizerForCodex-$version-win-x64-portable.zip",
+            "SkillOrganizerForCodex-$version-win-x64-setup.exe",
+            'skill-organizer-for-codex.cdx.json',
+            'THIRD_PARTY_NOTICES.txt'
+          ) | Sort-Object
+          $actualNames = @(Get-ChildItem -LiteralPath $releaseRoot -File | Select-Object -ExpandProperty Name | Sort-Object)
+          $unexpectedDirectories = @(Get-ChildItem -LiteralPath $releaseRoot -Directory -Force)
+          if ($unexpectedDirectories.Count -ne 0 -or
+              (Compare-Object -ReferenceObject $expectedNames -DifferenceObject $actualNames)) {
+            throw 'Downloaded release asset set differs from the verified contract.'
+          }
+
+          $checksumEntries = @{}
+          foreach ($line in Get-Content -LiteralPath (Join-Path $releaseRoot 'SHA256SUMS.txt')) {
+            if ($line -notmatch '^([0-9a-f]{64})  ([^/\\]+)$') { throw "Invalid checksum line: $line" }
+            if ($checksumEntries.ContainsKey($Matches[2])) { throw "Duplicate checksum entry: $($Matches[2])" }
+            $checksumEntries[$Matches[2]] = $Matches[1]
+          }
+          $hashTargets = @($actualNames | Where-Object { $_ -ne 'SHA256SUMS.txt' } | Sort-Object)
+          if (Compare-Object -ReferenceObject $hashTargets -DifferenceObject @($checksumEntries.Keys | Sort-Object)) {
+            throw 'SHA256SUMS.txt does not cover the exact downloaded asset set.'
+          }
+          foreach ($name in $hashTargets) {
+            $actualHash = (Get-FileHash -LiteralPath (Join-Path $releaseRoot $name) -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actualHash -ne $checksumEntries[$name]) { throw "Downloaded asset checksum mismatch: $name" }
+          }
+
+          $metadata = Get-Content -LiteralPath (Join-Path $releaseRoot 'RELEASE-METADATA.json') -Raw | ConvertFrom-Json
+          if ($metadata.schemaVersion -ne 1 -or $metadata.version -ne $version -or
+              $metadata.repository -ne 'lingxuanqjc-alt/codex-skill-organizer' -or
+              $metadata.platform -ne 'windows-x64') {
+            throw 'Downloaded release metadata does not identify this exact repository/version/platform.'
+          }
+          $sbom = Get-Content -LiteralPath (Join-Path $releaseRoot 'skill-organizer-for-codex.cdx.json') -Raw | ConvertFrom-Json
+          if ($sbom.bomFormat -ne 'CycloneDX' -or $sbom.specVersion -ne '1.6' -or
+              $sbom.metadata.component.version -ne $version) {
+            throw 'Downloaded CycloneDX SBOM metadata does not match the release.'
+          }
+          $notesPath = [System.IO.Path]::GetFullPath('artifacts/publish-notes/RELEASE_NOTES.md')
+          $notes = Get-Content -LiteralPath $notesPath -Raw
+          foreach ($requiredWarning in @('未进行代码签名', 'Windows SmartScreen', 'SHA256SUMS.txt', '非 OpenAI 官方产品')) {
+            if (-not $notes.Contains($requiredWarning)) { throw "Release safety notes omit: $requiredWarning" }
+          }
+
+      - name: Create GitHub release from reverified assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = '${{ needs.build-and-smoke.outputs.version }}'
+          $releaseRoot = [System.IO.Path]::GetFullPath("artifacts/release/$version")
+          $notesPath = [System.IO.Path]::GetFullPath('artifacts/publish-notes/RELEASE_NOTES.md')
+          $notes = Get-Content -LiteralPath $notesPath -Raw
+          $releaseFiles = @(
+            Get-ChildItem -LiteralPath $releaseRoot -File |
+              Sort-Object -Property Name |
+              Select-Object -ExpandProperty FullName
+          )
+          if ($releaseFiles.Count -eq 0) { throw 'No release files were produced.' }
+          gh release create "${{ github.ref_name }}" @releaseFiles `
+            --repo "${{ github.repository }}" `
+            --verify-tag `
+            --title "Skill Organizer for Codex $version" `
+            --notes $notes `
+            --generate-notes

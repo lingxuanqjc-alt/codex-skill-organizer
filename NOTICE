@@ -1,0 +1,9 @@
+Skill Organizer for Codex
+Copyright (c) 2026 lx
+
+This distribution includes third-party software. The release artifact contains
+a generated THIRD_PARTY_NOTICES.txt file and a CycloneDX SBOM describing the
+exact dependency set bundled in that release.
+
+The source repository is:
+https://github.com/lingxuanqjc-alt/codex-skill-organizer

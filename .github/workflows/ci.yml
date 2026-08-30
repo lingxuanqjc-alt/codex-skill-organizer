@@ -1,0 +1,202 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Typecheck, tests, bundles, plugin, release contracts
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Verify workflow supply-chain policy
+        shell: pwsh
+        run: |
+          $workflowFiles = @(Get-ChildItem -LiteralPath .github/workflows -Filter '*.yml' -File)
+          $workflowText = ($workflowFiles | ForEach-Object { Get-Content -LiteralPath $_.FullName -Raw }) -join "`n"
+          $actionReferences = [regex]::Matches($workflowText, 'uses:\s+[^@\s]+@([^\s#]+)')
+          foreach ($reference in $actionReferences) {
+            if ($reference.Groups[1].Value -notmatch '^[0-9a-f]{40}$') {
+              throw "Workflow action is not pinned to a full commit SHA: $($reference.Value)"
+            }
+          }
+          $versionCommentCount = [regex]::Matches(
+            $workflowText,
+            '(?m)^\s*uses:\s+[^@\s]+@[0-9a-f]{40}\s+#\s+v\S+\s*$'
+          ).Count
+          if ($versionCommentCount -ne $actionReferences.Count) {
+            throw 'Every pinned Action must retain its reviewed version tag in a trailing comment.'
+          }
+          $checkoutCount = [regex]::Matches($workflowText, 'uses:\s+actions/checkout@[0-9a-f]{40}').Count
+          $nonPersistingCheckoutCount = [regex]::Matches($workflowText, '(?m)^\s+persist-credentials:\s+false\s*$').Count
+          if ($checkoutCount -ne $nonPersistingCheckoutCount) {
+            throw 'Every checkout action must explicitly disable persisted credentials.'
+          }
+
+          $releaseWorkflow = Get-Content -LiteralPath .github/workflows/release.yml -Raw
+          foreach ($requiredPolicy in @(
+            '(?ms)^permissions:\s*\r?\n\s+contents:\s+read\s*$',
+            '(?ms)^\s{2}build-and-smoke:.*?^\s{4}permissions:\s*\r?\n\s{6}contents:\s+read\s*$',
+            '(?ms)^\s{2}publish:.*?^\s{4}permissions:\s*\r?\n\s{6}contents:\s+write\s*$',
+            'git merge-base --is-ancestor',
+            'npm audit --omit=dev --audit-level=high',
+            '--notes\s+\$notes'
+          )) {
+            if ($releaseWorkflow -notmatch $requiredPolicy) {
+              throw "Release workflow policy is missing: $requiredPolicy"
+            }
+          }
+          if ([regex]::Matches($releaseWorkflow, '(?m)^\s+contents:\s+write\s*$').Count -ne 1) {
+            throw 'Only the isolated publish job may receive contents: write.'
+          }
+          $publishMatch = [regex]::Match($releaseWorkflow, '(?ms)^\s{2}publish:\s*\r?\n(?<body>.*)\z')
+          if (-not $publishMatch.Success) { throw 'Release workflow has no isolated final publish job.' }
+          $publishBlock = $publishMatch.Groups['body'].Value
+          foreach ($requiredPublishBoundary in @(
+            '^\s{4}needs:\s+build-and-smoke\s*$',
+            'actions/download-artifact@[0-9a-f]{40}',
+            'Reverify downloaded release assets without executing repository code',
+            'gh release create'
+          )) {
+            if ($publishBlock -notmatch "(?m)$requiredPublishBoundary") {
+              throw "Publish boundary is missing: $requiredPublishBoundary"
+            }
+          }
+          foreach ($forbiddenPublishOperation in @(
+            'actions/checkout@',
+            '(?m)^\s*(?:npm|node|dotnet)\s+'
+          )) {
+            if ($publishBlock -match $forbiddenPublishOperation) {
+              throw "Publish job may only download, reverify, and release artifacts: $forbiddenPublishOperation"
+            }
+          }
+
+          $releaseNotes = Get-Content -LiteralPath .github/RELEASE_NOTES.md -Raw
+          foreach ($requiredWarning in @('未进行代码签名', 'Windows SmartScreen', 'SHA256SUMS.txt', '非 OpenAI 官方产品')) {
+            if (-not $releaseNotes.Contains($requiredWarning)) {
+              throw "Fixed release notes omit: $requiredWarning"
+            }
+          }
+
+      - name: Set up pinned Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.18.0'
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Verify application
+        run: npm run check
+
+      - name: Verify plugin and release safety contracts
+        shell: pwsh
+        run: ./scripts/release/Test-ReleaseScaffold.ps1
+
+      - name: Audit production dependency severities
+        run: npm audit --omit=dev --audit-level=high
+
+  desktop:
+    name: Windows desktop shell
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Set up pinned .NET SDK
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+        with:
+          global-json-file: global.json
+
+      - name: Set up pinned Node.js for reproducible icon generation
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.18.0'
+
+      - name: Generate original icon and resolve product version
+        id: desktop-version
+        shell: pwsh
+        run: |
+          node scripts/build-icon.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Original ICO generation failed.' }
+          $version = (Get-Content -LiteralPath package.json -Raw | ConvertFrom-Json).version
+          if ($version -notmatch '^(\d+)\.(\d+)\.(\d+)') { throw "Invalid package version: $version" }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "assembly=$($Matches[1]).$($Matches[2]).$($Matches[3]).0" >> $env:GITHUB_OUTPUT
+
+      - name: Build x64 desktop shell
+        shell: pwsh
+        run: |
+          dotnet build desktop/SkillOrganizerForCodex.Desktop.csproj `
+            -c Release -p:Platform=x64 `
+            -p:Version=${{ steps.desktop-version.outputs.version }} `
+            -p:AssemblyVersion=${{ steps.desktop-version.outputs.assembly }} `
+            -p:FileVersion=${{ steps.desktop-version.outputs.assembly }}
+
+      - name: Publish self-contained x64 smoke payload
+        shell: pwsh
+        run: |
+          dotnet publish desktop/SkillOrganizerForCodex.Desktop.csproj `
+            -c Release -p:Platform=x64 -r win-x64 --self-contained true `
+            -p:PublishSingleFile=true `
+            -p:Version=${{ steps.desktop-version.outputs.version }} `
+            -p:AssemblyVersion=${{ steps.desktop-version.outputs.assembly }} `
+            -p:FileVersion=${{ steps.desktop-version.outputs.assembly }} `
+            -o artifacts/desktop-smoke
+
+      - name: Require the desktop entry point
+        shell: pwsh
+        run: |
+          if (-not (Test-Path -LiteralPath artifacts/desktop-smoke/SkillOrganizerForCodex.exe -PathType Leaf)) {
+            throw 'Desktop publish did not produce SkillOrganizerForCodex.exe.'
+          }
+
+      - name: Verify byte-identical desktop publish across absolute paths
+        shell: pwsh
+        run: ./scripts/release/Test-DeterministicDesktopPublish.ps1
+
+  browser:
+    name: Workbench browser contract
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Set up pinned Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.18.0'
+          cache: npm
+
+      - name: Build workbench
+        run: |
+          npm ci
+          npm run build
+
+      - name: Install Playwright Chromium
+        run: npx playwright install chromium
+
+      - name: Verify browser interactions
+        run: npm run test:browser

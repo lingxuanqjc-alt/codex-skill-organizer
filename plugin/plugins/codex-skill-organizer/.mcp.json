@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "codex_skill_organizer": {
+      "type": "stdio",
+      "command": "cmd.exe",
+      "args": [
+        "/d",
+        "/q",
+        "/c",
+        "scripts\\start-mcp.cmd"
+      ],
+      "cwd": "."
+    }
+  }
+}

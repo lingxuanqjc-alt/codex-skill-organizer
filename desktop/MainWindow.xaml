@@ -1,0 +1,63 @@
+<Window x:Class="SkillOrganizerForCodex.Desktop.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
+        mc:Ignorable="d"
+        Title="{DynamicResource WindowTitle}"
+        Width="1280"
+        Height="800"
+        MinWidth="860"
+        MinHeight="560"
+        WindowStartupLocation="CenterScreen">
+  <Grid Background="{DynamicResource WindowBackgroundBrush}">
+    <wv2:WebView2 x:Name="WorkbenchWebView"
+                  AutomationProperties.Name="{DynamicResource WorkbenchAccessibleName}"
+                  Visibility="Collapsed" />
+
+    <Grid x:Name="StatusPanel"
+          Margin="32"
+          HorizontalAlignment="Center"
+          VerticalAlignment="Center"
+          MaxWidth="620">
+      <Grid.RowDefinitions>
+        <RowDefinition Height="Auto" />
+        <RowDefinition Height="Auto" />
+        <RowDefinition Height="Auto" />
+      </Grid.RowDefinitions>
+      <TextBlock x:Name="StatusTitle"
+                 FontSize="24"
+                 FontWeight="SemiBold"
+                 Text="{DynamicResource LoadingTitle}"
+                 TextAlignment="Center"
+                 TextWrapping="Wrap" />
+      <TextBlock x:Name="StatusDetail"
+                 Grid.Row="1"
+                 Margin="0,12,0,0"
+                 Foreground="{DynamicResource SecondaryTextBrush}"
+                 FontSize="14"
+                 Text="{DynamicResource LoadingDetail}"
+                 TextAlignment="Center"
+                 TextWrapping="Wrap" />
+      <StackPanel Grid.Row="2"
+                  Margin="0,20,0,0"
+                  HorizontalAlignment="Center"
+                  Orientation="Horizontal">
+        <Button x:Name="RetryButton"
+                MinWidth="116"
+                Padding="14,8"
+                Click="RetryButton_OnClick"
+                Content="{DynamicResource RetryButton}"
+                Visibility="Collapsed" />
+        <Button x:Name="OpenBrowserButton"
+                MinWidth="148"
+                Margin="12,0,0,0"
+                Padding="14,8"
+                Click="OpenBrowserButton_OnClick"
+                Content="{DynamicResource OpenInBrowserButton}"
+                Visibility="Collapsed" />
+      </StackPanel>
+    </Grid>
+  </Grid>
+</Window>
