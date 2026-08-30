@@ -141,6 +141,8 @@ if (-not $draftCreateBlock.Contains('--draft') -or $releaseWorkflowText.Contains
 }
 foreach ($rollbackSmokeInvariant in @(
     'Publish deterministic failing-health upgrade fixture',
+    '$initialInstallLog = Join-Path $env:RUNNER_TEMP ''cso-initial-install.log''',
+    'SETUP-DIAGNOSTIC:',
     '$fixtureHealthProcess = Start-Process',
     'if ($fixtureHealthProcess.ExitCode -ne 71)',
     '$faultHealthProcess = Start-Process',

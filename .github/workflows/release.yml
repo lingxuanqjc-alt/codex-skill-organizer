@@ -189,9 +189,18 @@ jobs:
           $releaseRoot = [System.IO.Path]::GetFullPath("artifacts/release/$version")
           $setup = Join-Path $releaseRoot "SkillOrganizerForCodex-$version-win-x64-setup.exe"
           $portableZip = Join-Path $releaseRoot "SkillOrganizerForCodex-$version-win-x64-portable.zip"
-          $installArgs = '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /TYPE=desktop /COMPONENTS=workbench'
+          $initialInstallLog = Join-Path $env:RUNNER_TEMP 'cso-initial-install.log'
+          $installArgs = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /TYPE=desktop /COMPONENTS=workbench /LOG=`"$initialInstallLog`""
           $process = Start-Process -FilePath $setup -ArgumentList $installArgs -Wait -PassThru
-          if ($process.ExitCode -ne 0) { throw "Installer smoke failed: $($process.ExitCode)" }
+          if ($process.ExitCode -ne 0) {
+            if (Test-Path -LiteralPath $initialInstallLog -PathType Leaf) {
+              Get-Content -LiteralPath $initialInstallLog |
+                Where-Object { $_ -match '(?i)Installer preflight|Extracted and verified|Completed the verified|Completed the exact-version|Unable to launch' } |
+                Select-Object -Last 30 |
+                ForEach-Object { Write-Host "SETUP-DIAGNOSTIC: $_" }
+            }
+            throw "Installer smoke failed: $($process.ExitCode)"
+          }
           $productRoot = Join-Path $env:LOCALAPPDATA 'Programs\SkillOrganizerForCodex'
           $versionRoot = Join-Path $productRoot "versions\$version"
           & (Join-Path $productRoot 'SkillOrganizerForCodex.exe') --health-check
