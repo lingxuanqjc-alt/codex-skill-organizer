@@ -10,6 +10,7 @@ const WINDOWS_DRIVE_TYPE_PROBE_TIMEOUT_MS = 15_000;
 export interface PathLocationProbeOptions {
   platform?: NodeJS.Platform;
   resolveWindowsDriveType?: WindowsDriveTypeResolver;
+  windowsDriveTypeTimeoutMs?: number;
 }
 
 function isUncPath(candidate: string): boolean {
@@ -60,7 +61,7 @@ export async function probePathLocation(
     // machines can take more than five seconds before DriveInfo executes.
     const driveType = await (options.resolveWindowsDriveType ?? resolveWindowsDriveType)(
       driveRoot,
-      WINDOWS_DRIVE_TYPE_PROBE_TIMEOUT_MS,
+      options.windowsDriveTypeTimeoutMs ?? WINDOWS_DRIVE_TYPE_PROBE_TIMEOUT_MS,
     );
     if (driveType === "Network") return "network";
     if (["Fixed", "Removable", "Ram"].includes(driveType)) return "local";

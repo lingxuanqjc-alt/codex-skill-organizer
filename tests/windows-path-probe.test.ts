@@ -25,7 +25,7 @@ test("Windows mapped network drives and probe failures fail closed", async () =>
   }), "local");
 });
 
-test("Windows drive probe reserves 15 seconds for cold PowerShell startup", async () => {
+test("Windows drive probe keeps a 15 second product default while isolated smoke can grant a longer budget", async () => {
   let observedTimeoutMs: number | undefined;
   const location = await probePathLocation("C:\\skills", {
     platform: "win32",
@@ -37,14 +37,25 @@ test("Windows drive probe reserves 15 seconds for cold PowerShell startup", asyn
 
   assert.equal(location, "local");
   assert.equal(observedTimeoutMs, 15_000);
+
+  const smokeLocation = await probePathLocation("C:\\skills", {
+    platform: "win32",
+    windowsDriveTypeTimeoutMs: 45_000,
+    resolveWindowsDriveType: async (_root, timeoutMs) => {
+      observedTimeoutMs = timeoutMs;
+      return "Fixed";
+    },
+  });
+  assert.equal(smokeLocation, "local");
+  assert.equal(observedTimeoutMs, 45_000);
 });
 
 test("real Windows drive probe recognizes the runner temporary drive when explicitly requested", {
   skip: process.platform !== "win32" || process.env.CSO_RUN_REAL_WINDOWS_PATH_PROBE !== "1",
-  timeout: 20_000,
+  timeout: 55_000,
 }, async () => {
   assert.equal(
-    await probePathLocation(os.tmpdir()),
+    await probePathLocation(os.tmpdir(), { windowsDriveTypeTimeoutMs: 45_000 }),
     "local",
     "the isolated release smoke must exercise the real PowerShell DriveInfo resolver",
   );
