@@ -40,6 +40,9 @@ of downloading an unpinned installer compiler.
 - The publish job verifies the downloaded Actions artifact, creates a draft,
   uploads the complete asset set, and publishes only after the remote tag still
   resolves to the built commit.
+- Automatic cleanup is limited to an incomplete draft before publication is
+  attempted. Once publication starts, an ambiguous command result or later
+  verification failure preserves the Release for manual inspection.
 - After publication, the Release must report as immutable. Any correction uses
   a new version; the published tag and assets are never replaced.
 

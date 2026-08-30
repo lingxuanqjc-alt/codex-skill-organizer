@@ -241,6 +241,277 @@ if (exceeded) process.exit(1);
 if ($LASTEXITCODE -ne 0) {
     throw 'A GitHub Actions run block exceeds the guarded 20,500-character limit.'
 }
+$publishRunExtractor = @'
+const fs = require('node:fs');
+const YAML = require('yaml');
+const document = YAML.parse(fs.readFileSync(process.argv[1], 'utf8'));
+const step = document.jobs?.publish?.steps?.find(
+  (candidate) => candidate.name === 'Create GitHub release from reverified assets',
+);
+if (!step || typeof step.run !== 'string') process.exit(2);
+process.stdout.write(step.run);
+'@
+$publishRunText = (& node -e $publishRunExtractor $releaseWorkflowPath) -join [Environment]::NewLine
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($publishRunText)) {
+    throw 'The immutable Release publication script could not be extracted from the workflow.'
+}
+
+function Assert-ReleasePublicationRollbackContract {
+    param([Parameter(Mandatory)][string]$Source)
+
+    $tokens = $null
+    $parseErrors = $null
+    $ast = [Management.Automation.Language.Parser]::ParseInput(
+        $Source,
+        [ref]$tokens,
+        [ref]$parseErrors)
+    if ($parseErrors.Count -ne 0) {
+        throw "The immutable Release publication script does not parse: $($parseErrors[0].Message)"
+    }
+
+    $publicationAssignments = @($ast.FindAll({
+        param($Node)
+        $Node -is [Management.Automation.Language.AssignmentStatementAst] -and
+            $Node.Left -is [Management.Automation.Language.VariableExpressionAst] -and
+            $Node.Left.VariablePath.IsUnqualified -and
+            $Node.Left.VariablePath.UserPath -ceq 'publicationAttempted'
+    }, $true) | Sort-Object { $_.Extent.StartOffset })
+    $publicationReferences = @($ast.FindAll({
+        param($Node)
+        $Node -is [Management.Automation.Language.VariableExpressionAst] -and
+            $Node.VariablePath.IsUnqualified -and
+            $Node.VariablePath.UserPath -ceq 'publicationAttempted'
+    }, $true))
+    if ($publicationAssignments.Count -ne 2 -or $publicationReferences.Count -ne 3 -or
+        $publicationAssignments[0].Operator -ne [Management.Automation.Language.TokenKind]::Equals -or
+        $publicationAssignments[0].Right.Extent.Text -cne '$false' -or
+        $publicationAssignments[1].Operator -ne [Management.Automation.Language.TokenKind]::Equals -or
+        $publicationAssignments[1].Right.Extent.Text -cne '$true') {
+        throw 'Publication state must have exactly one false initialization, one true transition, and one guarded read.'
+    }
+
+    $releaseCreatedAssignments = @($ast.FindAll({
+        param($Node)
+        $Node -is [Management.Automation.Language.AssignmentStatementAst] -and
+            $Node.Left -is [Management.Automation.Language.VariableExpressionAst] -and
+            $Node.Left.VariablePath.IsUnqualified -and
+            $Node.Left.VariablePath.UserPath -ceq 'releaseCreated'
+    }, $true) | Sort-Object { $_.Extent.StartOffset })
+    $releaseCreatedReferences = @($ast.FindAll({
+        param($Node)
+        $Node -is [Management.Automation.Language.VariableExpressionAst] -and
+            $Node.VariablePath.IsUnqualified -and
+            $Node.VariablePath.UserPath -ceq 'releaseCreated'
+    }, $true))
+    if ($releaseCreatedAssignments.Count -ne 3 -or $releaseCreatedReferences.Count -ne 4 -or
+        $releaseCreatedAssignments[0].Operator -ne [Management.Automation.Language.TokenKind]::Equals -or
+        $releaseCreatedAssignments[0].Right.Extent.Text -cne '$false' -or
+        $releaseCreatedAssignments[1].Operator -ne [Management.Automation.Language.TokenKind]::Equals -or
+        $releaseCreatedAssignments[1].Right.Extent.Text -cne '$true' -or
+        $releaseCreatedAssignments[2].Operator -ne [Management.Automation.Language.TokenKind]::Equals -or
+        $releaseCreatedAssignments[2].Right.Extent.Text -cne '$false') {
+        throw 'Draft state must have exactly one false initialization, one true transition, one published transition, and one guarded read.'
+    }
+
+    $allCommands = @($ast.FindAll({
+        param($Node)
+        $Node -is [Management.Automation.Language.CommandAst]
+    }, $true))
+    $forbiddenMutatorNames = @(
+        'Set-Variable',
+        'New-Variable',
+        'Clear-Variable',
+        'Remove-Variable',
+        'Set-Item',
+        'New-Item',
+        'Clear-Item',
+        'Remove-Item',
+        'Rename-Item',
+        'Move-Item',
+        'Copy-Item'
+    )
+    $forbiddenVariableMutators = @(
+        foreach ($commandAst in $allCommands) {
+            $commandName = $commandAst.GetCommandName()
+            if ([string]::IsNullOrWhiteSpace($commandName)) { continue }
+            $commandLeaf = @($commandName -split '\\')[-1]
+            $resolvedCommands = @(Get-Command -Name $commandName -ErrorAction SilentlyContinue)
+            $resolvedNames = @($commandLeaf)
+            foreach ($resolvedCommand in $resolvedCommands) {
+                $resolvedNames += if ($resolvedCommand.CommandType -eq [Management.Automation.CommandTypes]::Alias) {
+                    $resolvedCommand.ResolvedCommandName
+                }
+                else {
+                    $resolvedCommand.Name
+                }
+            }
+            if (@($resolvedNames | Where-Object { $_ -in $forbiddenMutatorNames }).Count -ne 0) {
+                $commandAst
+            }
+        }
+    )
+    if ($forbiddenVariableMutators.Count -ne 0) {
+        throw 'The Release publication script must not mutate state through variable or provider commands.'
+    }
+
+    $releaseCommands = @($allCommands | Where-Object {
+        $_.GetCommandName() -ceq 'gh' -and
+            $_.CommandElements.Count -ge 3 -and
+            $_.CommandElements[1].Extent.Text -ceq 'release'
+    })
+    $draftCommands = @($releaseCommands | Where-Object { $_.CommandElements[2].Extent.Text -ceq 'create' })
+    $uploadCommands = @($releaseCommands | Where-Object { $_.CommandElements[2].Extent.Text -ceq 'upload' })
+    $publishCommands = @($releaseCommands | Where-Object { $_.CommandElements[2].Extent.Text -ceq 'edit' })
+    $deleteCommands = @($releaseCommands | Where-Object { $_.CommandElements[2].Extent.Text -ceq 'delete' })
+    if ($draftCommands.Count -ne 1 -or $uploadCommands.Count -ne 1 -or
+        $publishCommands.Count -ne 1 -or $deleteCommands.Count -ne 1) {
+        throw 'Release publication must have exactly one create, upload, publish, and guarded delete command.'
+    }
+    if ($publicationAssignments[0].Extent.EndOffset -ge $draftCommands[0].Extent.StartOffset -or
+        $publicationAssignments[1].Extent.StartOffset -le $uploadCommands[0].Extent.EndOffset -or
+        $publicationAssignments[1].Extent.EndOffset -ge $publishCommands[0].Extent.StartOffset) {
+        throw 'Publication state must initialize before draft creation and transition only after upload, immediately before publication.'
+    }
+    $tagMatchCommands = @($allCommands | Where-Object { $_.GetCommandName() -ceq 'Assert-RemoteTagMatchesBuild' } |
+        Sort-Object { $_.Extent.StartOffset })
+    if ($tagMatchCommands.Count -ne 3 -or
+        $releaseCreatedAssignments[0].Extent.EndOffset -ge $tagMatchCommands[0].Extent.StartOffset -or
+        $releaseCreatedAssignments[1].Extent.StartOffset -le $draftCommands[0].Extent.EndOffset -or
+        $releaseCreatedAssignments[1].Extent.EndOffset -ge $uploadCommands[0].Extent.StartOffset -or
+        $releaseCreatedAssignments[2].Extent.StartOffset -le $publishCommands[0].Extent.EndOffset -or
+        $releaseCreatedAssignments[2].Extent.EndOffset -ge $tagMatchCommands[2].Extent.StartOffset) {
+        throw 'Draft state must transition only after creation and after publication, before their following operations.'
+    }
+
+    $deleteCommand = $deleteCommands[0]
+    if ($deleteCommand.Extent.Text -cne '& gh release delete $tag --repo $repository --yes' -or
+        $deleteCommand.Parent -isnot [Management.Automation.Language.PipelineAst] -or
+        $deleteCommand.Parent.Parent -isnot [Management.Automation.Language.StatementBlockAst] -or
+        $deleteCommand.Parent.Parent.Parent -isnot [Management.Automation.Language.IfStatementAst]) {
+        throw 'The only Release delete command must be directly controlled by the publication safety guard.'
+    }
+    $deleteStatementBlock = $deleteCommand.Parent.Parent
+    $cleanupGuard = $deleteStatementBlock.Parent
+    if ($cleanupGuard.Clauses.Count -ne 1 -or $null -ne $cleanupGuard.ElseClause -or
+        $cleanupGuard.Clauses[0].Item1.Extent.Text -cne '$releaseCreated -and -not $publicationAttempted' -or
+        -not [object]::ReferenceEquals($cleanupGuard.Clauses[0].Item2, $deleteStatementBlock)) {
+        throw 'Release cleanup must be limited to a created draft before publication is attempted.'
+    }
+    if ($cleanupGuard.Parent -isnot [Management.Automation.Language.StatementBlockAst] -or
+        $cleanupGuard.Parent.Parent -isnot [Management.Automation.Language.CatchClauseAst]) {
+        throw 'The Release cleanup guard must be a top-level catch statement.'
+    }
+    $catchStatements = @($cleanupGuard.Parent.Statements)
+    if ($catchStatements.Count -ne 3 -or
+        $catchStatements[0] -isnot [Management.Automation.Language.AssignmentStatementAst] -or
+        $catchStatements[0].Extent.Text -cne '$publicationFailure = $_' -or
+        -not [object]::ReferenceEquals($catchStatements[1], $cleanupGuard) -or
+        $catchStatements[2] -isnot [Management.Automation.Language.ThrowStatementAst] -or
+        $catchStatements[2].Extent.Text -cne 'throw $publicationFailure') {
+        throw 'The publication catch must capture the failure, conditionally clean the draft, and rethrow without an early exit.'
+    }
+
+    $releaseTry = $cleanupGuard.Parent.Parent.Parent
+    if ($releaseTry -isnot [Management.Automation.Language.TryStatementAst] -or
+        $releaseTry.CatchClauses.Count -ne 1 -or $null -ne $releaseTry.Finally) {
+        throw 'Release publication must use one guarded try/catch without a separate finally path.'
+    }
+    $topLevelStatements = @($ast.EndBlock.Statements)
+    $releaseTryIndex = -1
+    for ($index = 0; $index -lt $topLevelStatements.Count; $index++) {
+        if ([object]::ReferenceEquals($topLevelStatements[$index], $releaseTry)) {
+            $releaseTryIndex = $index
+            break
+        }
+    }
+    if ($releaseTryIndex -lt 2 -or
+        -not [object]::ReferenceEquals($topLevelStatements[$releaseTryIndex - 2], $releaseCreatedAssignments[0]) -or
+        -not [object]::ReferenceEquals($topLevelStatements[$releaseTryIndex - 1], $publicationAssignments[0])) {
+        throw 'Draft and publication state must initialize as adjacent top-level statements immediately before the publication try/catch.'
+    }
+
+    $tryStatements = @($releaseTry.Body.Statements)
+    $expectedCreateFailure = "if (`$LASTEXITCODE -ne 0) { throw 'Unable to create the draft GitHub Release.' }"
+    $expectedUploadFailure = "if (`$LASTEXITCODE -ne 0) { throw 'Unable to upload every verified release asset.' }"
+    $expectedPublishFailure = "if (`$LASTEXITCODE -ne 0) { throw 'Unable to publish the verified draft GitHub Release.' }"
+    if ($tryStatements.Count -ne 12 -or
+        -not [object]::ReferenceEquals($tryStatements[0], $tagMatchCommands[0].Parent) -or
+        -not [object]::ReferenceEquals($tryStatements[1], $draftCommands[0].Parent) -or
+        $tryStatements[2].Extent.Text -cne $expectedCreateFailure -or
+        -not [object]::ReferenceEquals($tryStatements[3], $releaseCreatedAssignments[1]) -or
+        -not [object]::ReferenceEquals($tryStatements[4], $uploadCommands[0].Parent) -or
+        $tryStatements[5].Extent.Text -cne $expectedUploadFailure -or
+        -not [object]::ReferenceEquals($tryStatements[6], $tagMatchCommands[1].Parent) -or
+        -not [object]::ReferenceEquals($tryStatements[7], $publicationAssignments[1]) -or
+        -not [object]::ReferenceEquals($tryStatements[8], $publishCommands[0].Parent) -or
+        $tryStatements[9].Extent.Text -cne $expectedPublishFailure -or
+        -not [object]::ReferenceEquals($tryStatements[10], $releaseCreatedAssignments[2]) -or
+        -not [object]::ReferenceEquals($tryStatements[11], $tagMatchCommands[2].Parent)) {
+        throw 'Release publication state transitions and success checks must remain direct, reachable try statements in the reviewed order.'
+    }
+}
+
+function Assert-PublicationContractRejectsMutation {
+    param(
+        [Parameter(Mandatory)][string]$Name,
+        [Parameter(Mandatory)][string]$MutatedSource
+    )
+
+    if ($MutatedSource -ceq $publishRunText) {
+        throw "Publication contract mutation did not change the fixture: $Name"
+    }
+    try {
+        Assert-ReleasePublicationRollbackContract -Source $MutatedSource
+    }
+    catch {
+        return
+    }
+    throw "Publication contract accepted an unsafe mutation: $Name"
+}
+
+Assert-ReleasePublicationRollbackContract -Source $publishRunText
+$newline = [Environment]::NewLine
+Assert-PublicationContractRejectsMutation -Name 'early true transition' -MutatedSource (
+    $publishRunText.Replace(
+        '$publicationAttempted = $false',
+        '$publicationAttempted = $false' + $newline + '$publicationAttempted = $true'))
+Assert-PublicationContractRejectsMutation -Name 'reset before publish' -MutatedSource (
+    $publishRunText.Replace(
+        '& gh release edit $tag --repo $repository --draft=false',
+        '$publicationAttempted = [bool]::False' + $newline + '& gh release edit $tag --repo $repository --draft=false'))
+Assert-PublicationContractRejectsMutation -Name 'provider mutation' -MutatedSource (
+    $publishRunText.Replace(
+        '$publicationAttempted = $false',
+        '$publicationAttempted = $false' + $newline + 'Set-Variable -Name publicationAttempted -Value $true'))
+Assert-PublicationContractRejectsMutation -Name 'provider alias mutation' -MutatedSource (
+    $publishRunText.Replace(
+        '$publicationAttempted = $true',
+        '$publicationAttempted = $true' + $newline + 'sv -Name publicationAttempted -Value $false'))
+Assert-PublicationContractRejectsMutation -Name 'variable provider removal' -MutatedSource (
+    $publishRunText.Replace(
+        '$publicationAttempted = $true',
+        '$publicationAttempted = $true' + $newline + 'ri variable:publicationAttempted'))
+Assert-PublicationContractRejectsMutation -Name 'premature draft reset' -MutatedSource (
+    $publishRunText.Replace(
+        '$releaseCreated = $true',
+        '$releaseCreated = $true' + $newline + '$releaseCreated = $false'))
+Assert-PublicationContractRejectsMutation -Name 'unreachable publication transition' -MutatedSource (
+    $publishRunText.Replace(
+        '$publicationAttempted = $true',
+        'if ($false) { $publicationAttempted = $true }'))
+Assert-PublicationContractRejectsMutation -Name 'unreachable draft transition' -MutatedSource (
+    $publishRunText.Replace(
+        '$releaseCreated = $true',
+        'if ($false) { $releaseCreated = $true }'))
+Assert-PublicationContractRejectsMutation -Name 'second unguarded delete' -MutatedSource (
+    $publishRunText.Replace(
+        '  throw $publicationFailure',
+        '  & gh release delete $tag --repo $repository --yes' + $newline + '  throw $publicationFailure'))
+
+$releaseDeletePattern = '(?im)^\s*(?:&\s*)?gh\s+release\s+delete\b'
+if ([regex]::Matches($releaseWorkflowText, $releaseDeletePattern).Count -ne 1) {
+    throw 'The entire Release workflow must contain exactly one guarded Release delete command.'
+}
 $ciWorkflowText = Get-Content -LiteralPath (Join-Path $repoRoot '.github\workflows\ci.yml') -Raw
 foreach ($workflowEntry in @(
     [pscustomobject]@{ Name = 'CI'; Text = $ciWorkflowText },
@@ -284,13 +555,18 @@ $draftCreateIndex = $releaseWorkflowText.IndexOf('& gh release create $tag', [St
 $firstTagCheckIndex = $releaseWorkflowText.IndexOf($tagMatchInvocation, [StringComparison]::Ordinal)
 $assetUploadIndex = $releaseWorkflowText.IndexOf('& gh release upload $tag @releaseFiles', $draftCreateIndex, [StringComparison]::Ordinal)
 $prePublishTagCheckIndex = $releaseWorkflowText.IndexOf($tagMatchInvocation, $assetUploadIndex, [StringComparison]::Ordinal)
+$publicationAttemptedIndex = $releaseWorkflowText.IndexOf('$publicationAttempted = $true', $prePublishTagCheckIndex, [StringComparison]::Ordinal)
 $publishDraftIndex = $releaseWorkflowText.IndexOf('& gh release edit $tag --repo $repository --draft=false', $prePublishTagCheckIndex, [StringComparison]::Ordinal)
+$publishedReleaseIndex = $releaseWorkflowText.IndexOf('$releaseCreated = $false', $publishDraftIndex, [StringComparison]::Ordinal)
 $postPublishTagCheckIndex = $releaseWorkflowText.IndexOf($tagMatchInvocation, $publishDraftIndex, [StringComparison]::Ordinal)
+$cleanupGuardIndex = $releaseWorkflowText.IndexOf('if ($releaseCreated -and -not $publicationAttempted)', $postPublishTagCheckIndex, [StringComparison]::Ordinal)
 $cleanupReleaseIndex = $releaseWorkflowText.IndexOf('& gh release delete $tag --repo $repository --yes', $postPublishTagCheckIndex, [StringComparison]::Ordinal)
 if ($firstTagCheckIndex -lt 0 -or $draftCreateIndex -le $firstTagCheckIndex -or $assetUploadIndex -le $draftCreateIndex -or
-    $prePublishTagCheckIndex -le $assetUploadIndex -or $publishDraftIndex -le $prePublishTagCheckIndex -or
-    $postPublishTagCheckIndex -le $publishDraftIndex -or $cleanupReleaseIndex -le $postPublishTagCheckIndex) {
-    throw 'Release workflow must upload only to a draft, reverify before and after publication, and clean an incomplete Release on failure.'
+    $prePublishTagCheckIndex -le $assetUploadIndex -or $publicationAttemptedIndex -le $prePublishTagCheckIndex -or
+    $publishDraftIndex -le $publicationAttemptedIndex -or $publishedReleaseIndex -le $publishDraftIndex -or
+    $postPublishTagCheckIndex -le $publishedReleaseIndex -or $cleanupGuardIndex -le $postPublishTagCheckIndex -or
+    $cleanupReleaseIndex -le $cleanupGuardIndex) {
+    throw 'Release workflow must upload only to a draft, reverify before and after publication, and clean only a pre-publication draft on failure.'
 }
 $draftCreateBlock = $releaseWorkflowText.Substring($draftCreateIndex, $assetUploadIndex - $draftCreateIndex)
 if (-not $draftCreateBlock.Contains('--draft') -or $releaseWorkflowText.Contains('--cleanup-tag')) {

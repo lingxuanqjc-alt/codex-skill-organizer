@@ -85,6 +85,7 @@ pwsh -NoProfile -File .\scripts\release\Build-Release.ps1 `
 - 推送 tag 前，最终 tag 提交必须同时取得普通 CI 与手动完整 dry-run 成功；对应 SHA 和证据应记录在 `docs/ACCEPTANCE.md` 或发布检查记录中。
 - tag 必须是 `v<package.json version>`。tag job 中任何不一致都会在创建 GitHub Release 前失败。
 - 推送 tag 前必须重新确认仓库仍启用 Immutable Releases。发布工作流先下载并复验 Actions artifact，再创建 draft 并上传全部资产；再次确认远端 tag 后才发布。发布后再确认 Release 显示为 immutable 并核验 release attestation。Immutable GitHub Release 只在发布后锁定 tag 与资产，不能用手动 Actions artifact 的 digest 或保留策略代替。参见 [GitHub 官方说明](https://docs.github.com/en/code-security/concepts/supply-chain-security/immutable-releases)。
+- 创建草稿后、开始发布前的失败会清理不完整草稿；一旦发布调用已经开始，工作流不再自动删除 Release。此后若命令结果或发布后复核不明确，必须保留现场并人工核验，避免删除不可变 Release 后永久占用同名 tag。
 
 发布前人工确认：README 已说明非 OpenAI 官方、未签名 SmartScreen 风险、普通卸载保留数据、0.1.1 JSON 不迁移；`CHANGELOG.md` 日期与 tag 一致；测试记录没有把未执行项写成通过。
 

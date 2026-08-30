@@ -803,6 +803,7 @@ jobs:
           )
           if ($releaseFiles.Count -eq 0) { throw 'No release files were produced.' }
           $releaseCreated = $false
+          $publicationAttempted = $false
           try {
             Assert-RemoteTagMatchesBuild -Tag $tag -Repository $repository -BuiltSourceSha $builtSourceSha
             & gh release create $tag `
@@ -819,13 +820,14 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw 'Unable to upload every verified release asset.' }
 
             Assert-RemoteTagMatchesBuild -Tag $tag -Repository $repository -BuiltSourceSha $builtSourceSha
+            $publicationAttempted = $true
             & gh release edit $tag --repo $repository --draft=false
             if ($LASTEXITCODE -ne 0) { throw 'Unable to publish the verified draft GitHub Release.' }
-            Assert-RemoteTagMatchesBuild -Tag $tag -Repository $repository -BuiltSourceSha $builtSourceSha
             $releaseCreated = $false
+            Assert-RemoteTagMatchesBuild -Tag $tag -Repository $repository -BuiltSourceSha $builtSourceSha
           } catch {
             $publicationFailure = $_
-            if ($releaseCreated) {
+            if ($releaseCreated -and -not $publicationAttempted) {
               & gh release delete $tag --repo $repository --yes
               if ($LASTEXITCODE -ne 0) {
                 throw "Release publication failed and cleanup of the incomplete Release also failed: $($publicationFailure.Exception.Message)"

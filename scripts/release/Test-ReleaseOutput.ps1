@@ -48,13 +48,14 @@ $metadata = Get-Content -LiteralPath (Join-Path $releaseRoot 'RELEASE-METADATA.j
 if ($metadata.schemaVersion -ne 1 -or $metadata.product -ne 'Skill Organizer for Codex' -or
     $metadata.repository -ne 'lingxuanqjc-alt/codex-skill-organizer' -or
     $metadata.version -ne $ExpectedVersion -or $metadata.assemblyVersion -ne $expectedAssemblyVersion -or
-    $metadata.platform -ne 'windows-x64' -or
+    $metadata.protocolMajor -ne 2 -or $metadata.platform -ne 'windows-x64' -or
     $metadata.nodeVersion -ne "v$($runtimeLock.version)" -or
     $metadata.nodeExeSha256 -ne $runtimeLock.nodeExeSha256 -or
     $metadata.npmVersion -ne $runtimeLock.npmVersion -or
     $metadata.dotnetSdkVersion -ne $globalSdk.version -or
     $metadata.globalJsonSha256 -ne (Get-FileHash -LiteralPath $globalJsonPath -Algorithm SHA256).Hash.ToLowerInvariant() -or
-    $metadata.nugetLockSha256 -ne (Get-FileHash -LiteralPath $nugetLockPath -Algorithm SHA256).Hash.ToLowerInvariant()) {
+    $metadata.nugetLockSha256 -ne (Get-FileHash -LiteralPath $nugetLockPath -Algorithm SHA256).Hash.ToLowerInvariant() -or
+    $metadata.runtimeLock -ne 'scripts/release/runtime-lock.json') {
     throw 'RELEASE-METADATA.json does not match the release/version/runtime contract.'
 }
 
