@@ -107,7 +107,38 @@ $installerMatrixExitStatements = @($installerMatrixAst.FindAll({
 if ($installerMatrixExitStatements.Count -ne 0) {
     throw 'Installer matrix must return to its caller; an exit statement would terminate the shared release PowerShell host.'
 }
-$releaseWorkflowText = Get-Content -LiteralPath (Join-Path $repoRoot '.github\workflows\release.yml') -Raw
+$releaseWorkflowPath = Join-Path $repoRoot '.github\workflows\release.yml'
+$releaseWorkflowText = Get-Content -LiteralPath $releaseWorkflowPath -Raw
+$maintenanceShutdownProbePath = Join-Path $scriptRoot 'Invoke-InstalledServiceMaintenanceShutdown.ps1'
+$maintenanceShutdownProbeText = Get-Content -LiteralPath $maintenanceShutdownProbePath -Raw
+$probeTokens = $null
+$probeParseErrors = $null
+[void][Management.Automation.Language.Parser]::ParseFile(
+    $maintenanceShutdownProbePath,
+    [ref]$probeTokens,
+    [ref]$probeParseErrors)
+if ($probeParseErrors.Count -ne 0) {
+    throw 'Installed service maintenance shutdown probe is not valid PowerShell.'
+}
+$workflowLimitCheck = @'
+const fs = require('node:fs');
+const YAML = require('yaml');
+const document = YAML.parse(fs.readFileSync(process.argv[1], 'utf8'));
+let exceeded = false;
+function visit(value) {
+  if (!value || typeof value !== 'object') return;
+  for (const [key, child] of Object.entries(value)) {
+    if (key === 'run' && typeof child === 'string' && child.length > 20500) exceeded = true;
+    visit(child);
+  }
+}
+visit(document);
+if (exceeded) process.exit(1);
+'@
+& node -e $workflowLimitCheck $releaseWorkflowPath
+if ($LASTEXITCODE -ne 0) {
+    throw 'A GitHub Actions run block exceeds the guarded 20,500-character limit.'
+}
 $ciWorkflowText = Get-Content -LiteralPath (Join-Path $repoRoot '.github\workflows\ci.yml') -Raw
 foreach ($workflowEntry in @(
     [pscustomobject]@{ Name = 'CI'; Text = $ciWorkflowText },
@@ -177,16 +208,12 @@ foreach ($rollbackSmokeInvariant in @(
     '$seedProcess.WaitForExit(5000) | Out-Null',
     'if ($seedProcess.ExitCode -ne 0)',
     '$seedProcess.Dispose()',
-    'INSTALLED-SERVICE-DIAGNOSTIC: phase=',
-    'INSTALLED-SHUTDOWN-DIAGNOSTIC: stage=',
-    '-ArgumentList ''--shutdown-for-maintenance''',
-    '-RedirectStandardError $shutdownErrorPath',
-    '$shutdownTimedOut = -not $shutdownProcess.WaitForExit(60000)',
-    'finally {',
-    'Remove-Item -LiteralPath $shutdownErrorPath -Force -ErrorAction SilentlyContinue',
-    "Write-Host '::error::Unable to stop the seeded backend before upgrade smoke.'",
-    'exit 1',
-    'if ($shutdownControlFailed -or $shutdownTimedOut -or $shutdownExitCode -ne 0)',
+    '& ./scripts/release/Invoke-InstalledServiceMaintenanceShutdown.ps1',
+    '-DataRoot $dataRoot',
+    '-VersionRoot $versionRoot',
+    '-ExpectedVersion $version',
+    '-StableLauncher $stableLauncher',
+    'if (-not $?) { exit 1 }',
     '$rollbackHealthProcess = Start-Process -FilePath $stableLauncher -ArgumentList ''--health-check'' -Wait -PassThru -WindowStyle Hidden',
     'if ($rollbackHealthProcess.ExitCode -ne 0)',
     '$portableHealthProcess = Start-Process -FilePath (Join-Path $portableRoot ''SkillOrganizerForCodex.exe'') -ArgumentList ''--health-check'' -Wait -PassThru -WindowStyle Hidden',
@@ -212,6 +239,19 @@ foreach ($rollbackSmokeInvariant in @(
     if (-not $releaseWorkflowText.Contains($rollbackSmokeInvariant)) {
         throw "Release workflow upgrade-rollback smoke is missing: $rollbackSmokeInvariant"
     }
+}
+$maintenanceShutdownInvocation = @'
+& ./scripts/release/Invoke-InstalledServiceMaintenanceShutdown.ps1 `
+            -DataRoot $dataRoot `
+            -VersionRoot $versionRoot `
+            -ExpectedVersion $version `
+            -StableLauncher $stableLauncher
+          if (-not $?) { exit 1 }
+'@
+if ([regex]::Matches(
+        $releaseWorkflowText,
+        [regex]::Escape($maintenanceShutdownInvocation.Trim())).Count -ne 1) {
+    throw 'Release workflow must fail the outer GitHub step immediately when the maintenance shutdown probe exits nonzero.'
 }
 $bundledHealthTransportInvariants = @(
     'Verify bundled internal-health transport',
@@ -243,24 +283,30 @@ foreach ($bundledHealthTransportInvariant in $bundledHealthTransportInvariants) 
         throw "Release workflow bundled internal-health transport check is missing: $bundledHealthTransportInvariant"
     }
 }
-if ($releaseWorkflowText -match '(?im)(?:Write-(?:Host|Output|Error|Warning|Verbose|Debug)|Out-File|Add-Content|Set-Content)[^\r\n]*\$(?:stderrText|shutdownErrorText)') {
+if ($maintenanceShutdownProbeText -match '(?im)(?:Write-(?:Host|Output|Error|Warning|Verbose|Debug)|Out-File|Add-Content|Set-Content)[^\r\n]*\$(?:stderrText|shutdownErrorText)') {
     throw 'Release workflow must not print raw service stderr into the public Actions log.'
 }
 $serviceDiagnosticLine = 'Write-Host "INSTALLED-SERVICE-DIAGNOSTIC: phase=$phase descriptorFiles=$($diagnostic.DescriptorFileCount) parsed=$($diagnostic.ParsedDescriptorCount) valid=$($diagnostic.ValidDescriptorCount) descriptorReadFailed=$($diagnostic.DescriptorReadFailed) boundaryValid=$($diagnostic.BoundaryValid) versionMatches=$($diagnostic.VersionMatches) protocolCompatible=$($diagnostic.ProtocolCompatible) installRootMatches=$($diagnostic.InstallRootMatches) expectedNodeExists=$($diagnostic.ExpectedNodeExists) pidAlive=$($diagnostic.PidAlive) processPathReadable=$($diagnostic.ProcessPathReadable) processInspectionFailed=$($diagnostic.ProcessInspectionFailed) lexicalPathMatches=$($diagnostic.LexicalPathMatches) hashReadFailed=$($diagnostic.HashReadFailed) expectedContainsTilde=$($diagnostic.ExpectedNodeContainsTilde) processContainsTilde=$($diagnostic.ProcessPathContainsTilde) hashMatches=$($diagnostic.ProcessHashMatches)"'
 $shutdownDiagnosticLine = 'Write-Host "INSTALLED-SHUTDOWN-DIAGNOSTIC: stage=$safeShutdownStage category=$safeShutdownCategory exitCode=$safeShutdownExitCode"'
-if ([regex]::Matches($releaseWorkflowText, [regex]::Escape($serviceDiagnosticLine)).Count -ne 1 -or
-    [regex]::Matches($releaseWorkflowText, [regex]::Escape($shutdownDiagnosticLine)).Count -ne 1 -or
-    [regex]::Matches($releaseWorkflowText, 'INSTALLED-SERVICE-DIAGNOSTIC:').Count -ne 1 -or
-    [regex]::Matches($releaseWorkflowText, 'INSTALLED-SHUTDOWN-DIAGNOSTIC:').Count -ne 1) {
+if ([regex]::Matches($maintenanceShutdownProbeText, [regex]::Escape($serviceDiagnosticLine)).Count -ne 1 -or
+    [regex]::Matches($maintenanceShutdownProbeText, [regex]::Escape($shutdownDiagnosticLine)).Count -ne 1 -or
+    [regex]::Matches($maintenanceShutdownProbeText, 'INSTALLED-SERVICE-DIAGNOSTIC:').Count -ne 1 -or
+    [regex]::Matches($maintenanceShutdownProbeText, 'INSTALLED-SHUTDOWN-DIAGNOSTIC:').Count -ne 1) {
     throw 'Release workflow service diagnostics must use the fixed safe scalar field allowlist exactly once.'
 }
-$shutdownDiagnosticIndex = $releaseWorkflowText.IndexOf($shutdownDiagnosticLine, [StringComparison]::Ordinal)
-$shutdownFailureIndex = $releaseWorkflowText.LastIndexOf('if ($shutdownControlFailed -or $shutdownTimedOut -or $shutdownExitCode -ne 0)', $shutdownDiagnosticIndex, [StringComparison]::Ordinal)
-$shutdownExitIndex = $releaseWorkflowText.IndexOf('exit 1', $shutdownDiagnosticIndex, [StringComparison]::Ordinal)
+$shutdownDiagnosticIndex = $maintenanceShutdownProbeText.IndexOf($shutdownDiagnosticLine, [StringComparison]::Ordinal)
+$shutdownFailureIndex = $maintenanceShutdownProbeText.LastIndexOf('if ($shutdownControlFailed -or $shutdownTimedOut -or $shutdownExitCode -ne 0)', $shutdownDiagnosticIndex, [StringComparison]::Ordinal)
+$shutdownExitIndex = $maintenanceShutdownProbeText.IndexOf('exit 1', $shutdownDiagnosticIndex, [StringComparison]::Ordinal)
 if ($shutdownFailureIndex -lt 0 -or $shutdownDiagnosticIndex -le $shutdownFailureIndex -or $shutdownExitIndex -le $shutdownDiagnosticIndex) {
     throw 'Release workflow shutdown diagnostics must remain inside the fail-closed nonzero-exit branch.'
 }
-$shutdownFailureBlock = $releaseWorkflowText.Substring($shutdownFailureIndex, $shutdownExitIndex - $shutdownFailureIndex)
+$shutdownSuccessExit = 'exit 0'
+if ([regex]::Matches($maintenanceShutdownProbeText, '(?m)^exit 0$').Count -ne 1 -or
+    $maintenanceShutdownProbeText.IndexOf($shutdownSuccessExit, $shutdownExitIndex, [StringComparison]::Ordinal) -le $shutdownExitIndex -or
+    -not $maintenanceShutdownProbeText.TrimEnd().EndsWith($shutdownSuccessExit, [StringComparison]::Ordinal)) {
+    throw 'Installed service maintenance shutdown probe must return an explicit zero exit code only after the fail-closed branch.'
+}
+$shutdownFailureBlock = $maintenanceShutdownProbeText.Substring($shutdownFailureIndex, $shutdownExitIndex - $shutdownFailureIndex)
 if ($shutdownFailureBlock.Contains('throw ') -or
     $shutdownFailureBlock -match '(?i)\$(?:shutdownErrorText|descriptor|actualProcessPath|expectedNodePath|dataRoot|productRoot|versionRoot|stableLauncher|shutdownErrorPath|env:USERNAME|env:USERPROFILE|env:HOME|env:LOCALAPPDATA)\b' -or
     $shutdownFailureBlock -match '(?i)(?:Exception\.Message|\.ToString\(|ConvertTo-Json|GITHUB_STEP_SUMMARY|GITHUB_OUTPUT)') {
@@ -275,39 +321,39 @@ $safeShutdownErrorUses = @(
     '$shutdownErrorText -match ''(?i)access.+denied|denied.+access|拒绝访问'''
 )
 foreach ($safeShutdownErrorUse in $safeShutdownErrorUses) {
-    if ([regex]::Matches($releaseWorkflowText, [regex]::Escape($safeShutdownErrorUse)).Count -ne 1) {
+    if ([regex]::Matches($maintenanceShutdownProbeText, [regex]::Escape($safeShutdownErrorUse)).Count -ne 1) {
         throw "Release workflow raw shutdown stderr is not confined to its fixed local classification use: $safeShutdownErrorUse"
     }
 }
-if ([regex]::Matches($releaseWorkflowText, '\$shutdownErrorText\b').Count -ne $safeShutdownErrorUses.Count -or
-    [regex]::Matches($releaseWorkflowText, 'Get-Content -LiteralPath \$shutdownErrorPath').Count -ne 1) {
+if ([regex]::Matches($maintenanceShutdownProbeText, '\$shutdownErrorText\b').Count -ne $safeShutdownErrorUses.Count -or
+    [regex]::Matches($maintenanceShutdownProbeText, 'Get-Content -LiteralPath \$shutdownErrorPath').Count -ne 1) {
     throw 'Release workflow raw shutdown stderr must not be copied, aliased, or read through another path.'
 }
-$shutdownEmptyCheckIndex = $releaseWorkflowText.IndexOf('[string]::IsNullOrWhiteSpace($shutdownErrorText)', [StringComparison]::Ordinal)
-$shutdownContainsIndex = $releaseWorkflowText.IndexOf('$shutdownErrorText.Contains(', [StringComparison]::Ordinal)
+$shutdownEmptyCheckIndex = $maintenanceShutdownProbeText.IndexOf('[string]::IsNullOrWhiteSpace($shutdownErrorText)', [StringComparison]::Ordinal)
+$shutdownContainsIndex = $maintenanceShutdownProbeText.IndexOf('$shutdownErrorText.Contains(', [StringComparison]::Ordinal)
 if ($shutdownEmptyCheckIndex -lt 0 -or $shutdownContainsIndex -le $shutdownEmptyCheckIndex) {
     throw 'Release workflow must normalize and reject empty shutdown stderr before fixed-message classification.'
 }
-$beforeDiagnosticCall = "Write-InstalledServiceDiagnostic 'before' (Get-InstalledServiceDiagnostic `$dataRoot `$versionRoot `$version)"
+$beforeDiagnosticCall = "Write-InstalledServiceDiagnostic 'before' ("
 $afterDiagnosticCall = "Write-InstalledServiceDiagnostic 'after' `$afterShutdownDiagnostic"
-if ([regex]::Matches($releaseWorkflowText, [regex]::Escape($beforeDiagnosticCall)).Count -ne 1 -or
-    [regex]::Matches($releaseWorkflowText, [regex]::Escape($afterDiagnosticCall)).Count -ne 1 -or
-    [regex]::Matches($releaseWorkflowText, 'Write-InstalledServiceDiagnostic\b').Count -ne 3) {
+if ([regex]::Matches($maintenanceShutdownProbeText, [regex]::Escape($beforeDiagnosticCall)).Count -ne 1 -or
+    [regex]::Matches($maintenanceShutdownProbeText, [regex]::Escape($afterDiagnosticCall)).Count -ne 1 -or
+    [regex]::Matches($maintenanceShutdownProbeText, 'Write-InstalledServiceDiagnostic\b').Count -ne 3) {
     throw 'Release workflow service diagnostic phases must remain the fixed before/after calls.'
 }
 $shutdownErrorPathDeclaration = '$shutdownErrorPath = Join-Path $env:RUNNER_TEMP'
-$shutdownErrorPathIndex = $releaseWorkflowText.IndexOf($shutdownErrorPathDeclaration, [StringComparison]::Ordinal)
-$shutdownStartIndex = $releaseWorkflowText.IndexOf('$shutdownProcess = Start-Process', $shutdownErrorPathIndex, [StringComparison]::Ordinal)
-$shutdownTryIndex = $releaseWorkflowText.LastIndexOf('try {', $shutdownStartIndex, [StringComparison]::Ordinal)
-$shutdownFinallyIndex = $releaseWorkflowText.IndexOf('finally {', $shutdownStartIndex, [StringComparison]::Ordinal)
-$shutdownDisposeIndex = $releaseWorkflowText.IndexOf('$shutdownProcess.Dispose()', $shutdownFinallyIndex, [StringComparison]::Ordinal)
-$shutdownRemoveIndex = $releaseWorkflowText.IndexOf('Remove-Item -LiteralPath $shutdownErrorPath -Force -ErrorAction SilentlyContinue', $shutdownFinallyIndex, [StringComparison]::Ordinal)
-$shutdownStageIndex = $releaseWorkflowText.IndexOf('$shutdownStage = if', $shutdownRemoveIndex, [StringComparison]::Ordinal)
+$shutdownErrorPathIndex = $maintenanceShutdownProbeText.IndexOf($shutdownErrorPathDeclaration, [StringComparison]::Ordinal)
+$shutdownStartIndex = $maintenanceShutdownProbeText.IndexOf('$shutdownProcess = Start-Process', $shutdownErrorPathIndex, [StringComparison]::Ordinal)
+$shutdownTryIndex = $maintenanceShutdownProbeText.LastIndexOf('try {', $shutdownStartIndex, [StringComparison]::Ordinal)
+$shutdownFinallyIndex = $maintenanceShutdownProbeText.IndexOf('finally {', $shutdownStartIndex, [StringComparison]::Ordinal)
+$shutdownDisposeIndex = $maintenanceShutdownProbeText.IndexOf('$shutdownProcess.Dispose()', $shutdownFinallyIndex, [StringComparison]::Ordinal)
+$shutdownRemoveIndex = $maintenanceShutdownProbeText.IndexOf('Remove-Item -LiteralPath $shutdownErrorPath -Force -ErrorAction SilentlyContinue', $shutdownFinallyIndex, [StringComparison]::Ordinal)
+$shutdownStageIndex = $maintenanceShutdownProbeText.IndexOf('$shutdownStage = if', $shutdownRemoveIndex, [StringComparison]::Ordinal)
 if ($shutdownErrorPathIndex -lt 0 -or $shutdownTryIndex -le $shutdownErrorPathIndex -or
     $shutdownStartIndex -le $shutdownTryIndex -or $shutdownFinallyIndex -le $shutdownStartIndex -or
     $shutdownDisposeIndex -le $shutdownFinallyIndex -or $shutdownRemoveIndex -le $shutdownDisposeIndex -or
     $shutdownStageIndex -le $shutdownRemoveIndex -or
-    [regex]::Matches($releaseWorkflowText, '\$shutdownErrorPath\b').Count -ne 5) {
+    [regex]::Matches($maintenanceShutdownProbeText, '\$shutdownErrorPath\b').Count -ne 5) {
     throw 'Release workflow must dispose the shutdown launcher and delete raw stderr in one outer finally block.'
 }
 if ([regex]::Matches($shutdownFailureBlock, '(?im)^\s*Write-Host\b').Count -ne 2 -or
@@ -317,41 +363,41 @@ if ([regex]::Matches($shutdownFailureBlock, '(?im)^\s*Write-Host\b').Count -ne 2
 }
 $safeStageBlock = @'
 $safeShutdownStage = switch ([string]$shutdownStage) {
-            'process-control' { 'process-control' }
-            'timeout' { 'timeout' }
-            'maintenance' { 'maintenance' }
-            'stable-forwarding' { 'stable-forwarding' }
-            default { 'unexpected' }
-          }
+    'process-control' { 'process-control' }
+    'timeout' { 'timeout' }
+    'maintenance' { 'maintenance' }
+    'stable-forwarding' { 'stable-forwarding' }
+    default { 'unexpected' }
+}
 '@
 $safeCategoryBlock = @'
 $safeShutdownCategory = switch ([string]$shutdownCategory) {
-            'process-control-failed' { 'process-control-failed' }
-            'timeout' { 'timeout' }
-            'success' { 'success' }
-            'stderr-read-failed' { 'stderr-read-failed' }
-            'no-stderr' { 'no-stderr' }
-            'install-root-boundary-rejected' { 'install-root-boundary-rejected' }
-            'runtime-process-boundary-rejected' { 'runtime-process-boundary-rejected' }
-            'process-access-denied' { 'process-access-denied' }
-            default { 'unclassified' }
-          }
+    'process-control-failed' { 'process-control-failed' }
+    'timeout' { 'timeout' }
+    'success' { 'success' }
+    'stderr-read-failed' { 'stderr-read-failed' }
+    'no-stderr' { 'no-stderr' }
+    'install-root-boundary-rejected' { 'install-root-boundary-rejected' }
+    'runtime-process-boundary-rejected' { 'runtime-process-boundary-rejected' }
+    'process-access-denied' { 'process-access-denied' }
+    default { 'unclassified' }
+}
 '@
 $safeExitBlock = @'
 $safeShutdownExitCode = if ($shutdownExitCode -is [int]) {
-            [int]$shutdownExitCode
-          } elseif ($shutdownExitCode -eq '<timeout>') {
-            '<timeout>'
-          } else {
-            '<unavailable>'
-          }
+    [int]$shutdownExitCode
+} elseif ($shutdownExitCode -eq '<timeout>') {
+    '<timeout>'
+} else {
+    '<unavailable>'
+}
 '@
-if (-not $releaseWorkflowText.Contains($safeStageBlock.Trim()) -or
-    -not $releaseWorkflowText.Contains($safeCategoryBlock.Trim()) -or
-    -not $releaseWorkflowText.Contains($safeExitBlock.Trim()) -or
-    [regex]::Matches($releaseWorkflowText, '\$safeShutdownStage\b').Count -ne 2 -or
-    [regex]::Matches($releaseWorkflowText, '\$safeShutdownCategory\b').Count -ne 2 -or
-    [regex]::Matches($releaseWorkflowText, '\$safeShutdownExitCode\b').Count -ne 2) {
+if (-not $maintenanceShutdownProbeText.Contains($safeStageBlock.Trim()) -or
+    -not $maintenanceShutdownProbeText.Contains($safeCategoryBlock.Trim()) -or
+    -not $maintenanceShutdownProbeText.Contains($safeExitBlock.Trim()) -or
+    [regex]::Matches($maintenanceShutdownProbeText, '\$safeShutdownStage\b').Count -ne 2 -or
+    [regex]::Matches($maintenanceShutdownProbeText, '\$safeShutdownCategory\b').Count -ne 2 -or
+    [regex]::Matches($maintenanceShutdownProbeText, '\$safeShutdownExitCode\b').Count -ne 2) {
     throw 'Release workflow must narrow shutdown stage, category, and exit code to fixed safe scalar values immediately before logging.'
 }
 $expectedHealthProbeArguments = "-ArgumentList '--health-check' -Wait -PassThru -WindowStyle Hidden"
