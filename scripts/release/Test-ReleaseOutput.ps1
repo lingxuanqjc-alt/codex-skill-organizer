@@ -11,6 +11,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+. (Join-Path $scriptRoot 'Get-CanonicalTextSha256.ps1')
 $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $scriptRoot '..\..'))
 $releaseRoot = [System.IO.Path]::GetFullPath($ReleaseDirectory)
 if (-not (Test-Path -LiteralPath $releaseRoot -PathType Container)) {
@@ -53,8 +54,8 @@ if ($metadata.schemaVersion -ne 1 -or $metadata.product -ne 'Skill Organizer for
     $metadata.nodeExeSha256 -ne $runtimeLock.nodeExeSha256 -or
     $metadata.npmVersion -ne $runtimeLock.npmVersion -or
     $metadata.dotnetSdkVersion -ne $globalSdk.version -or
-    $metadata.globalJsonSha256 -ne (Get-FileHash -LiteralPath $globalJsonPath -Algorithm SHA256).Hash.ToLowerInvariant() -or
-    $metadata.nugetLockSha256 -ne (Get-FileHash -LiteralPath $nugetLockPath -Algorithm SHA256).Hash.ToLowerInvariant() -or
+    $metadata.globalJsonSha256 -ne (Get-CanonicalTextSha256 -LiteralPath $globalJsonPath) -or
+    $metadata.nugetLockSha256 -ne (Get-CanonicalTextSha256 -LiteralPath $nugetLockPath) -or
     $metadata.runtimeLock -ne 'scripts/release/runtime-lock.json') {
     throw 'RELEASE-METADATA.json does not match the release/version/runtime contract.'
 }

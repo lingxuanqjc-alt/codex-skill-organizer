@@ -75,6 +75,8 @@ pwsh -NoProfile -File .\scripts\release\Build-Release.ps1 `
 
 `SHA256SUMS.txt` 覆盖除自身外的每个下载资产且不得含重复或路径穿越条目。安装后版本目录必须与 `CONTENT-MANIFEST-version-<version>.json` 一致；portable 解压目录必须与 portable manifest 一致。
 
+`RELEASE-METADATA.json` 中 `globalJsonSha256` 与 `nugetLockSha256` 是对应 UTF-8 无 BOM 文本统一为 LF 后的规范哈希，避免旧 Windows 工作树的 CRLF 与 GitHub 干净 checkout 产生不同发布证据；BOM 或非法 UTF-8 会直接失败，二进制和实际下载资产仍按原始字节计算 SHA-256。
+
 本机构建和 GitHub Actions 的外层安装器可能因 Inno Setup 时间元数据而具有不同哈希。可复现性对照使用三个内容清单、固定 runtime 哈希、生产 bundle 哈希、SBOM 组件和插件 manifest，不把安装器外层时间戳误当成内部差异。
 
 ## GitHub Actions 与 tag

@@ -14,6 +14,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $releaseScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+. (Join-Path $releaseScriptRoot 'Get-CanonicalTextSha256.ps1')
 $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $releaseScriptRoot '..\..'))
 $artifactsRoot = Join-Path $repoRoot 'artifacts'
 $package = Get-Content -LiteralPath (Join-Path $repoRoot 'package.json') -Raw | ConvertFrom-Json
@@ -411,8 +412,8 @@ $releaseMetadata = [ordered]@{
     nodeExeSha256 = $nodeExeHash
     npmVersion = $nodeNpmVersion
     dotnetSdkVersion = $dotnetSdkVersion
-    globalJsonSha256 = (Get-FileHash -LiteralPath $globalJsonPath -Algorithm SHA256).Hash.ToLowerInvariant()
-    nugetLockSha256 = (Get-FileHash -LiteralPath $nugetLockPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    globalJsonSha256 = Get-CanonicalTextSha256 -LiteralPath $globalJsonPath
+    nugetLockSha256 = Get-CanonicalTextSha256 -LiteralPath $nugetLockPath
     runtimeLock = 'scripts/release/runtime-lock.json'
     platform = 'windows-x64'
 } | ConvertTo-Json -Depth 4

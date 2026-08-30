@@ -7,6 +7,11 @@ $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $scriptRoot '..\..'))
 $pluginRoot = Join-Path $repoRoot 'plugin\plugins\codex-skill-organizer'
 $marketplacePath = Join-Path $repoRoot 'plugin\marketplace.json'
 $securityGatePath = Join-Path $repoRoot 'scripts\security-gate.mjs'
+$canonicalTextHashPath = Join-Path $scriptRoot 'Get-CanonicalTextSha256.ps1'
+if (-not (Test-Path -LiteralPath $canonicalTextHashPath -PathType Leaf)) {
+    throw 'Canonical release text hash helper is missing.'
+}
+. $canonicalTextHashPath
 $package = Get-Content -LiteralPath (Join-Path $repoRoot 'package.json') -Raw | ConvertFrom-Json
 $runtimeLock = Get-Content -LiteralPath (Join-Path $scriptRoot 'runtime-lock.json') -Raw | ConvertFrom-Json
 $globalSdk = (Get-Content -LiteralPath (Join-Path $repoRoot 'global.json') -Raw | ConvertFrom-Json).sdk
@@ -845,6 +850,7 @@ if (-not (Test-Path -LiteralPath (Join-Path $scriptRoot 'Test-ReleaseOutput.ps1'
     throw 'Release output validator is missing.'
 }
 $buildReleaseText = Get-Content -LiteralPath (Join-Path $scriptRoot 'Build-Release.ps1') -Raw
+$releaseOutputValidatorText = Get-Content -LiteralPath (Join-Path $scriptRoot 'Test-ReleaseOutput.ps1') -Raw
 foreach ($releaseInvariant in @(
     '& $nodeNpm ci',
     'scripts\version-contract.mjs',
@@ -855,6 +861,24 @@ foreach ($releaseInvariant in @(
     'CONTENT-MANIFEST-version-full-$Version.json'
 )) {
     if (-not $buildReleaseText.Contains($releaseInvariant)) { throw "Release reproducibility contract is missing: $releaseInvariant" }
+}
+foreach ($builderHashInvariant in @(
+    ". (Join-Path `$releaseScriptRoot 'Get-CanonicalTextSha256.ps1')",
+    'globalJsonSha256 = Get-CanonicalTextSha256 -LiteralPath $globalJsonPath',
+    'nugetLockSha256 = Get-CanonicalTextSha256 -LiteralPath $nugetLockPath'
+)) {
+    if (-not $buildReleaseText.Contains($builderHashInvariant)) {
+        throw "Release builder does not use canonical text hashes: $builderHashInvariant"
+    }
+}
+foreach ($validatorHashInvariant in @(
+    ". (Join-Path `$scriptRoot 'Get-CanonicalTextSha256.ps1')",
+    '$metadata.globalJsonSha256 -ne (Get-CanonicalTextSha256 -LiteralPath $globalJsonPath)',
+    '$metadata.nugetLockSha256 -ne (Get-CanonicalTextSha256 -LiteralPath $nugetLockPath)'
+)) {
+    if (-not $releaseOutputValidatorText.Contains($validatorHashInvariant)) {
+        throw "Release output validator does not use canonical text hashes: $validatorHashInvariant"
+    }
 }
 $backupStateHelper = Join-Path $repoRoot 'scripts\runtime\backup-state.mjs'
 if (-not (Test-Path -LiteralPath $backupStateHelper -PathType Leaf)) {
@@ -1558,6 +1582,66 @@ try {
     & (Join-Path $scriptRoot 'New-ContentManifest.ps1') -Root $manifestFixtureA -OutputPath $manifestA | Out-Null
     & (Join-Path $scriptRoot 'New-ContentManifest.ps1') -Root $manifestFixtureB -OutputPath $manifestB | Out-Null
     & (Join-Path $scriptRoot 'Compare-ContentManifest.ps1') -ReferenceManifest $manifestA -CandidateManifest $manifestB | Out-Null
+
+    $canonicalLf = Join-Path $temporaryRoot 'canonical-lf.txt'
+    $canonicalCrlf = Join-Path $temporaryRoot 'canonical-crlf.txt'
+    $canonicalCr = Join-Path $temporaryRoot 'canonical-cr.txt'
+    $canonicalBomCrlf = Join-Path $temporaryRoot 'canonical-bom-crlf.txt'
+    $canonicalChanged = Join-Path $temporaryRoot 'canonical-changed.txt'
+    $canonicalNoFinalNewline = Join-Path $temporaryRoot 'canonical-no-final-newline.txt'
+    $canonicalInvalidUtf8 = Join-Path $temporaryRoot 'canonical-invalid-utf8.txt'
+    $canonicalFixture = "alpha`nbeta`n"
+    [System.IO.File]::WriteAllText($canonicalLf, $canonicalFixture, [System.Text.UTF8Encoding]::new($false))
+    [System.IO.File]::WriteAllText($canonicalCrlf, $canonicalFixture.Replace("`n", "`r`n"), [System.Text.UTF8Encoding]::new($false))
+    [System.IO.File]::WriteAllText($canonicalCr, $canonicalFixture.Replace("`n", "`r"), [System.Text.UTF8Encoding]::new($false))
+    [System.IO.File]::WriteAllText($canonicalBomCrlf, $canonicalFixture.Replace("`n", "`r`n"), [System.Text.UTF8Encoding]::new($true))
+    [System.IO.File]::WriteAllText($canonicalChanged, "alpha`nchanged`n", [System.Text.UTF8Encoding]::new($false))
+    [System.IO.File]::WriteAllText($canonicalNoFinalNewline, "alpha`nbeta", [System.Text.UTF8Encoding]::new($false))
+    [System.IO.File]::WriteAllBytes($canonicalInvalidUtf8, [byte[]](0xC3, 0x28))
+    $canonicalCandidates = @(
+        $canonicalLf,
+        $canonicalCrlf,
+        $canonicalCr,
+        $canonicalBomCrlf,
+        $canonicalChanged,
+        $canonicalNoFinalNewline,
+        $canonicalInvalidUtf8
+    )
+    $canonicalRawHashesBefore = @{}
+    foreach ($canonicalCandidate in $canonicalCandidates) {
+        $canonicalRawHashesBefore[$canonicalCandidate] = (Get-FileHash -LiteralPath $canonicalCandidate -Algorithm SHA256).Hash
+    }
+    $expectedCanonicalHash = 'e49c81e2d2f84e259d40e2fb8192f3bcd198b355184845d76d8f58807d0d78ee'
+    if ((Get-FileHash -LiteralPath $canonicalLf -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expectedCanonicalHash) {
+        throw 'Canonical release text hash fixture does not match its known SHA-256 value.'
+    }
+    foreach ($canonicalCandidate in @($canonicalLf, $canonicalCrlf, $canonicalCr)) {
+        if ((Get-CanonicalTextSha256 -LiteralPath $canonicalCandidate) -ne $expectedCanonicalHash) {
+            throw 'Canonical release text hashing differs across LF, CRLF, or CR representations.'
+        }
+    }
+    foreach ($distinctCanonicalCandidate in @($canonicalChanged, $canonicalNoFinalNewline)) {
+        if ((Get-CanonicalTextSha256 -LiteralPath $distinctCanonicalCandidate) -eq $expectedCanonicalHash) {
+            throw 'Canonical release text hashing ignored a content or trailing-newline change.'
+        }
+    }
+    foreach ($rejectedCanonicalCandidate in @($canonicalBomCrlf, $canonicalInvalidUtf8)) {
+        $canonicalRejected = $false
+        try {
+            Get-CanonicalTextSha256 -LiteralPath $rejectedCanonicalCandidate | Out-Null
+        }
+        catch {
+            $canonicalRejected = $true
+        }
+        if (-not $canonicalRejected) {
+            throw 'Canonical release text hashing accepted a BOM or invalid UTF-8 input.'
+        }
+    }
+    foreach ($canonicalCandidate in $canonicalCandidates) {
+        if ((Get-FileHash -LiteralPath $canonicalCandidate -Algorithm SHA256).Hash -ne $canonicalRawHashesBefore[$canonicalCandidate]) {
+            throw 'Canonical release text hashing modified an input file.'
+        }
+    }
 }
 finally {
     $env:USERPROFILE = $oldUserProfile
