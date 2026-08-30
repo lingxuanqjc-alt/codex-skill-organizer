@@ -141,6 +141,10 @@ if (-not $draftCreateBlock.Contains('--draft') -or $releaseWorkflowText.Contains
 }
 foreach ($rollbackSmokeInvariant in @(
     'Publish deterministic failing-health upgrade fixture',
+    '$fixtureHealthProcess = Start-Process',
+    'if ($fixtureHealthProcess.ExitCode -ne 71)',
+    '$faultHealthProcess = Start-Process',
+    'if ($faultHealthProcess.ExitCode -ne 71)',
     '$faultVersion = "$($versionMatch.Groups[1].Value).$($versionMatch.Groups[2].Value).$([int]$versionMatch.Groups[3].Value + 1)-health-failure-fixture"',
     'if ($faultProcess.ExitCode -ne 7)',
     "Assert-LogCount `$faultLogText 'Starting the installation process' 0",
@@ -158,6 +162,10 @@ foreach ($rollbackSmokeInvariant in @(
     if (-not $releaseWorkflowText.Contains($rollbackSmokeInvariant)) {
         throw "Release workflow upgrade-rollback smoke is missing: $rollbackSmokeInvariant"
     }
+}
+$expectedHealthProbeArguments = "-ArgumentList '--health-check' -Wait -PassThru -WindowStyle Hidden"
+if ([regex]::Matches($releaseWorkflowText, [regex]::Escape($expectedHealthProbeArguments)).Count -ne 2) {
+    throw 'Expected-failure health probes must wait for the hidden child process and inspect its exit code explicitly.'
 }
 foreach ($matrixInvariant in @(
     "if (`$env:GITHUB_ACTIONS -ne 'true')",

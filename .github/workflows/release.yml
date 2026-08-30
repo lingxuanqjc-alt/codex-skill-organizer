@@ -168,8 +168,12 @@ jobs:
           dotnet publish installer/TestFixtures/FailingHealthCheck/FailingHealthCheck.csproj `
             -c Release -r win-x64 --self-contained false -o $fixtureRoot
           if ($LASTEXITCODE -ne 0) { throw 'Failing-health upgrade fixture publish failed.' }
-          & (Join-Path $fixtureRoot 'SkillOrganizerForCodex.exe') --health-check
-          if ($LASTEXITCODE -ne 71) { throw 'Failing-health fixture did not return its deterministic exit code.' }
+          $fixtureHealthProcess = Start-Process `
+            -FilePath (Join-Path $fixtureRoot 'SkillOrganizerForCodex.exe') `
+            -ArgumentList '--health-check' -Wait -PassThru -WindowStyle Hidden
+          if ($fixtureHealthProcess.ExitCode -ne 71) {
+            throw "Failing-health fixture returned $($fixtureHealthProcess.ExitCode), expected 71."
+          }
           "root=$fixtureRoot" >> $env:GITHUB_OUTPUT
 
       - name: Verify installer and portable contents on a clean runner
@@ -265,8 +269,12 @@ jobs:
           Get-ChildItem -LiteralPath '${{ steps.rollback_fixture.outputs.root }}' -Force | ForEach-Object {
             Copy-Item -LiteralPath $_.FullName -Destination $faultPayload -Recurse -Force
           }
-          & (Join-Path $faultPayload 'SkillOrganizerForCodex.exe') --health-check
-          if ($LASTEXITCODE -ne 71) { throw 'Fault payload does not fail health deterministically.' }
+          $faultHealthProcess = Start-Process `
+            -FilePath (Join-Path $faultPayload 'SkillOrganizerForCodex.exe') `
+            -ArgumentList '--health-check' -Wait -PassThru -WindowStyle Hidden
+          if ($faultHealthProcess.ExitCode -ne 71) {
+            throw "Fault payload returned $($faultHealthProcess.ExitCode), expected 71."
+          }
 
           $faultOutput = Join-Path $env:RUNNER_TEMP 'cso-failing-upgrade-installer'
           New-Item -ItemType Directory -Path $faultOutput -Force | Out-Null
