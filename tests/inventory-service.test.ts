@@ -17,6 +17,7 @@ import {
   type DurableFileOperations,
 } from "../src/core/durable-file.js";
 import { DatabaseRecoveryError } from "../src/core/database-recovery.js";
+import type { DirectoryIdentityOperations, DirectoryIdentityStats } from "../src/core/path-identity.js";
 import { scanSkillRoots, type ScanResult } from "../src/core/scanner.js";
 import type { RootDefinition } from "../src/shared/types.js";
 import {
@@ -917,6 +918,52 @@ test("a not-yet-created MCP project root stays retryable and session replacement
 
     snapshot = await inventory.replaceSessionProjects("mcp-session-fixture", []);
     assert.equal(snapshot.skills.some((skill) => skill.name === "created-later"), false);
+  } finally {
+    await inventory.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("an MCP project root supplied through a DOS 8.3 alias is stored and scanned by its canonical path", {
+  skip: process.platform !== "win32",
+}, async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "cso-session-short-root-"));
+  const declaredProject = "C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\project";
+  const canonicalize = (candidate: string): string => candidate.replace(
+    /\\RUNNER~1(?=\\|$)/iu,
+    "\\runneradmin",
+  );
+  const identities = new Map<string, number>();
+  const operations: DirectoryIdentityOperations = {
+    lstat: async (candidate): Promise<DirectoryIdentityStats> => {
+      const canonical = canonicalize(candidate).toLocaleLowerCase("en-US");
+      const identity = identities.get(canonical) ?? identities.size + 1;
+      identities.set(canonical, identity);
+      return {
+        dev: 9,
+        ino: identity,
+        isDirectory: () => true,
+        isSymbolicLink: () => false,
+      };
+    },
+    realpath: async (candidate) => canonicalize(candidate),
+  };
+  const appServer = new CountingRuntimeAppServer();
+  const inventory = new InventoryService({
+    roots: [],
+    statePath: path.join(directory, "organizer.db"),
+    appServer,
+    pathLocationProbe: async () => "local",
+    pathIdentityOperations: operations,
+    watchRoot: () => fakeWatcher(),
+  });
+  try {
+    await inventory.initialize();
+    await inventory.replaceSessionProjects("mcp-short-root", [declaredProject]);
+    assert.ok(
+      appServer.listCwds.at(-1)?.includes(canonicalize(declaredProject)),
+      "the app-server must receive the canonical long path instead of rejecting a safe short-name alias",
+    );
   } finally {
     await inventory.close();
     await rm(directory, { recursive: true, force: true });

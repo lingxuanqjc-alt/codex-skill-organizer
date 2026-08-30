@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -96,6 +97,47 @@ test("an Agents skill uses bounded parent Git evidence without changing its agen
     assert.ok(local);
     assert.equal(local.sourceId, "agents:local");
     assert.equal(local.installedCommit, undefined);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("a scanner root written with a DOS 8.3 alias retains GitHub provenance", async (context) => {
+  if (process.platform !== "win32") {
+    context.skip("DOS 8.3 aliases are Windows-specific");
+    return;
+  }
+  const directory = await mkdtemp(path.join(os.tmpdir(), "cso-short-git-source-"));
+  try {
+    await mkdir(path.join(directory, ".git"), { recursive: true });
+    await writeFile(path.join(directory, ".git", "config"), [
+      "[remote \"origin\"]",
+      "  url = https://github.com/example/short-path-skills.git",
+      "",
+    ].join("\n"), "utf8");
+    const commit = "1234567890abcdef1234567890abcdef12345678";
+    await writeFile(path.join(directory, ".git", "HEAD"), `${commit}\n`, "utf8");
+    await writeSkill(directory, "portable", {
+      name: "portable-short-root",
+      description: "Git provenance must survive a safe Windows path alias",
+    });
+    const shortRoot = execFileSync(
+      "cmd.exe",
+      ["/d", "/s", "/c", `for %I in ("${directory}") do @echo %~sI`],
+      { encoding: "utf8", windowsHide: true },
+    ).trim();
+    const physicalRoot = await realpath(directory);
+    if (!/~[0-9]/u.test(shortRoot) || shortRoot.toLocaleLowerCase("en-US") === physicalRoot.toLocaleLowerCase("en-US")) {
+      context.skip("8.3 short-name generation is disabled on this volume");
+      return;
+    }
+
+    const result = await scanSkillRoots([
+      { id: "agents", label: "Agents", path: shortRoot, kind: "agents" },
+    ]);
+
+    assert.equal(result.skills[0]?.sourceId, "github:example/short-path-skills");
+    assert.equal(result.skills[0]?.installedCommit, commit);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

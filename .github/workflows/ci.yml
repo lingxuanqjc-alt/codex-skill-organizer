@@ -105,6 +105,9 @@ jobs:
       - name: Verify application
         run: npm run check
 
+      - name: Install Chromium for release scaffold icon generation
+        run: npx playwright install chromium
+
       - name: Verify plugin and release safety contracts
         shell: pwsh
         run: ./scripts/release/Test-ReleaseScaffold.ps1
@@ -131,6 +134,12 @@ jobs:
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24.18.0'
+
+      - name: Install locked Node dependencies for icon generation
+        run: npm ci
+
+      - name: Install Chromium for deterministic icon generation
+        run: npx playwright install chromium
 
       - name: Generate original icon and resolve product version
         id: desktop-version

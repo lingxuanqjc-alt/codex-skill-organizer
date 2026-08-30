@@ -6,7 +6,15 @@ import path from "node:path";
 import { AppServerClient, type SkillsListEntry } from "./app-server-client.js";
 import { classifySkill } from "./classifier.js";
 import { resolveCodexHome } from "./codex-locations.js";
-import { hashIdentity, isPathWithin, normalizeLogicalPath, normalizeWindowsComparable } from "./path-identity.js";
+import {
+  hashIdentity,
+  inspectUnlinkedDirectoryChain,
+  isPathWithin,
+  normalizeLogicalPath,
+  normalizeWindowsComparable,
+  UnsafeDirectoryIdentityError,
+  type DirectoryIdentityOperations,
+} from "./path-identity.js";
 import { mergeScanResults, scanSkillRoots, type ScanResult } from "./scanner.js";
 import { defaultPathLocationProbe, type PathLocationProbe } from "./windows-path-probe.js";
 import {
@@ -70,6 +78,7 @@ export interface InventoryServiceOptions {
   appServer?: AppServerClient | null;
   updateService?: UpdateService;
   pathLocationProbe?: PathLocationProbe;
+  pathIdentityOperations?: DirectoryIdentityOperations;
   databaseRecoveryOperations?: DurableFileOperations;
   now?: () => Date;
   scanRoots?: (roots: RootDefinition[]) => Promise<ScanResult>;
@@ -270,6 +279,7 @@ export class InventoryService {
   quarantineService!: QuarantineService;
   readonly #now: () => Date;
   readonly #pathLocationProbe: PathLocationProbe;
+  readonly #pathIdentityOperations: DirectoryIdentityOperations;
   readonly #databaseRecoveryOperations: DurableFileOperations | undefined;
   readonly #scanRoots: (roots: RootDefinition[]) => Promise<ScanResult>;
   readonly #watchRoot: NonNullable<InventoryServiceOptions["watchRoot"]>;
@@ -304,6 +314,7 @@ export class InventoryService {
     this.appServer = options.appServer === undefined ? new AppServerClient() : options.appServer;
     this.updateService = options.updateService ?? new UpdateService();
     this.#pathLocationProbe = options.pathLocationProbe ?? defaultPathLocationProbe;
+    this.#pathIdentityOperations = options.pathIdentityOperations ?? { lstat, realpath };
     this.#databaseRecoveryOperations = options.databaseRecoveryOperations;
     this.#scanRoots = options.scanRoots ?? scanSkillRoots;
     this.#watchRoot = options.watchRoot ?? defaultWatchRoot;
@@ -1452,18 +1463,16 @@ export class InventoryService {
     if (location !== "local") {
       throw new InventoryMutationError(`${label}无法确认位于本机磁盘，拒绝授权管理`);
     }
-    let info;
+    let chain;
     try {
-      info = await lstat(resolved);
-    } catch {
+      chain = await inspectUnlinkedDirectoryChain(resolved, this.#pathIdentityOperations);
+    } catch (error) {
+      if (error instanceof UnsafeDirectoryIdentityError) {
+        throw new InventoryMutationError(`${label}不能通过 symlink、junction 或其他 reparse point 指向其他位置`);
+      }
       throw new InventoryMutationError(`${label}不存在或不可读取`);
     }
-    if (!info.isDirectory() || info.isSymbolicLink()) throw new InventoryMutationError(`${label}必须是无链接的普通目录`);
-    const physical = await realpath(resolved);
-    if (normalizeWindowsComparable(physical) !== normalizeWindowsComparable(resolved)) {
-      throw new InventoryMutationError(`${label}不能通过 symlink 或 junction 指向其他位置`);
-    }
-    return physical;
+    return chain.at(-1)!.physicalPath;
   }
 
   #liveQuarantineInventory(): LiveQuarantineInventory {

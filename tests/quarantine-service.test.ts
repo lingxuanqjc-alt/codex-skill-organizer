@@ -143,6 +143,51 @@ test("prepare is read-only, shows impact, and execution requires management mode
   }
 });
 
+test("quarantine accepts a DOS 8.3 source alias only when it retains the same physical identity", async () => {
+  const harness = await createHarness();
+  try {
+    const shortParent = path.join(harness.temporary, "RUNNER~1");
+    const longParent = path.join(harness.temporary, "runneradmin");
+    const rootPath = path.join(shortParent, "skills");
+    const aliasHarness: Harness = {
+      ...harness,
+      rootPath,
+      root: {
+        id: "fixture-short-root",
+        label: "Fixture short root",
+        path: rootPath,
+        kind: "fixture",
+        managementGranted: true,
+      },
+    };
+    const { unit, skill } = await createUnit(aliasHarness, "safe-short-alias");
+    const base = createNodeQuarantineFileAdapter();
+    const toLong = (candidate: string): string => candidate.replace(shortParent, longParent);
+    const toShort = (candidate: string): string => candidate.replace(longParent, shortParent);
+    const service = new QuarantineService({
+      database: harness.database,
+      dataDirectory: harness.dataPath,
+      roots: [aliasHarness.root],
+      now: () => new Date(NOW),
+      fileAdapter: {
+        lstat: (candidate) => base.lstat(toShort(candidate)),
+        realpath: async (candidate) => toLong(await base.realpath(toShort(candidate))),
+      },
+    });
+    await harness.database.setManagementMode(true);
+
+    const plan = await service.prepare([unit.installationUnitId], inventory([unit], [skill]));
+    assert.equal(plan.executable, true);
+    const result = await service.quarantine(plan.planId, true, plan.inventoryRevision);
+
+    assert.deepEqual(result.succeeded, [unit.installationUnitId]);
+    assert.equal(await exists(unit.absolutePath), false);
+    assert.equal(await exists(result.entries[0]!.quarantinePath), true);
+  } finally {
+    await closeHarness(harness);
+  }
+});
+
 test("candidate discovery groups nested physical skills into one unconfirmed bundle boundary", async () => {
   const harness = await createHarness();
   try {

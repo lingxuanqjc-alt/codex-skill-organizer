@@ -18,7 +18,14 @@ import {
   type QuarantineEntry,
   OrganizerDatabase,
 } from "../v2/index.js";
-import { hashIdentity, isPathWithin, normalizeWindowsComparable, safeRelative } from "./path-identity.js";
+import {
+  hashIdentity,
+  inspectUnlinkedDirectoryChain,
+  isPathWithin,
+  normalizeWindowsComparable,
+  safeRelative,
+  UnsafeDirectoryIdentityError,
+} from "./path-identity.js";
 import { defaultPathLocationProbe, type PathLocation, type PathLocationProbe } from "./windows-path-probe.js";
 
 const DEFAULT_SIZE_LIMIT_BYTES = 1024 * 1024 * 1024;
@@ -768,28 +775,32 @@ export class QuarantineService {
     }
 
     const directories: PhysicalDirectoryIdentity[] = [];
+    let inspectedChain;
+    try {
+      inspectedChain = await inspectUnlinkedDirectoryChain(resolvedTarget, this.#files);
+    } catch (error) {
+      if (error instanceof UnsafeDirectoryIdentityError) {
+        throw new QuarantineSafetyError(`授权 root/parent 存在不安全路径组件：${error.message}`);
+      }
+      throw error;
+    }
+    const inspectedByPath = new Map(
+      inspectedChain.map((item) => [normalizeWindowsComparable(item.declaredPath), item]),
+    );
     let physicalRoot: string | null = null;
     for (const directoryPath of paths) {
-      const info = await this.#files.lstat(directoryPath);
-      if (!info.isDirectory() || info.isSymbolicLink()) {
-        throw new QuarantineSafetyError("授权 root/parent 被替换为 symlink、junction 或非目录");
-      }
-      const physicalPath = await this.#files.realpath(directoryPath);
-      if (normalizeWindowsComparable(physicalPath) !== normalizeWindowsComparable(directoryPath)) {
-        throw new QuarantineSafetyError("授权 root/parent 存在 reparse 或 junction substitution");
-      }
+      const inspected = inspectedByPath.get(normalizeWindowsComparable(directoryPath));
+      if (!inspected) throw new QuarantineSafetyError("无法取得授权 root/parent 的物理身份");
+      const physicalPath = inspected.physicalPath;
       physicalRoot ??= physicalPath;
       if (!isPathWithin(physicalPath, physicalRoot)) {
         throw new QuarantineSafetyError("授权 root/parent 的物理路径越界");
       }
-      if (!Number.isFinite(info.dev) || !Number.isFinite(info.ino)) {
-        throw new QuarantineSafetyError("无法取得授权 root/parent 的物理身份");
-      }
       directories.push({
         path: directoryPath,
         physicalPath,
-        device: String(info.dev),
-        inode: String(info.ino),
+        device: inspected.device,
+        inode: inspected.inode,
       });
     }
 

@@ -43,6 +43,7 @@ interface SourceIdentity {
 
 interface PendingSkillCandidate {
   root: RootDefinition;
+  physicalRoot: string;
   entryPath: string;
   relativePath: string;
   breadcrumb: string;
@@ -160,6 +161,7 @@ async function gitCommit(gitDirectory: string): Promise<string | undefined> {
 async function parentGitEvidence(
   skillPath: string,
   rootPath: string,
+  physicalRootPath: string,
   cache: GitEvidenceCache,
   options: ScanOptions,
 ): Promise<GitEvidence> {
@@ -178,7 +180,7 @@ async function parentGitEvidence(
         const entry = await lstat(gitDirectory);
         if (entry.isSymbolicLink() || !entry.isDirectory()) return {};
         const physicalGitDirectory = await realpath(gitDirectory);
-        if (!isPathWithin(physicalGitDirectory, rootPath)) return {};
+        if (!isPathWithin(physicalGitDirectory, physicalRootPath)) return {};
         const config = await readBoundedText(
           path.join(physicalGitDirectory, "config"),
           256 * 1024,
@@ -205,6 +207,7 @@ async function parentGitEvidence(
 
 async function deriveSourceIdentity(
   root: RootDefinition,
+  physicalRoot: string,
   relativePath: string,
   skillPath: string,
   gitEvidenceCache: GitEvidenceCache = new Map(),
@@ -229,7 +232,7 @@ async function deriveSourceIdentity(
   }
 
   if (root.kind === "agents") {
-    const git = await parentGitEvidence(skillPath, root.path, gitEvidenceCache, options);
+    const git = await parentGitEvidence(skillPath, root.path, physicalRoot, gitEvidenceCache, options);
     const provenance = githubSource(git.remote);
     return {
       scope: "agents",
@@ -258,7 +261,7 @@ async function deriveSourceIdentity(
     };
   }
 
-  const git = await parentGitEvidence(skillPath, root.path, gitEvidenceCache, options);
+  const git = await parentGitEvidence(skillPath, root.path, physicalRoot, gitEvidenceCache, options);
   // A directory name or self-declared frontmatter origin is only a hint. Exact
   // portable identity and update evidence require a verified parent Git remote
   // (plugin-cache identities are handled separately above).
@@ -372,6 +375,7 @@ export async function scanSkillRoots(
 
   async function visitDirectory(
     root: RootDefinition,
+    physicalRoot: string,
     directoryPath: string,
     ancestorPhysicalPaths: ReadonlySet<string>,
   ): Promise<void> {
@@ -404,7 +408,7 @@ export async function scanSkillRoots(
         }
         const nextAncestors = new Set(ancestorPhysicalPaths);
         nextAncestors.add(comparableDirectory);
-        await visitDirectory(root, entryPath, nextAncestors);
+        await visitDirectory(root, physicalRoot, entryPath, nextAncestors);
         continue;
       }
 
@@ -433,7 +437,7 @@ export async function scanSkillRoots(
         if (targetInfo.isDirectory()) {
           const nextAncestors = new Set(ancestorPhysicalPaths);
           nextAncestors.add(comparableTarget);
-          await visitDirectory(root, entryPath, nextAncestors);
+          await visitDirectory(root, physicalRoot, entryPath, nextAncestors);
           continue;
         }
       }
@@ -469,6 +473,7 @@ export async function scanSkillRoots(
       }
       candidatesByPhysicalId.set(physicalId, {
         root,
+        physicalRoot,
         entryPath,
         relativePath,
         breadcrumb,
@@ -483,7 +488,7 @@ export async function scanSkillRoots(
       const rootInfo = await lstat(root.path);
       if (!rootInfo.isDirectory()) continue;
       const rootRealPath = await realpath(root.path);
-      await visitDirectory(root, root.path, new Set([normalizeWindowsComparable(rootRealPath)]));
+      await visitDirectory(root, rootRealPath, root.path, new Set([normalizeWindowsComparable(rootRealPath)]));
     } catch (error) {
       if (!errors.some((item) => item.path === root.path)) {
         errors.push({ path: root.path, message: error instanceof Error ? error.message : String(error) });
@@ -509,6 +514,7 @@ export async function scanSkillRoots(
 
     const source = await deriveSourceIdentity(
       candidate.root,
+      candidate.physicalRoot,
       candidate.relativePath,
       candidate.entryPath,
       gitEvidenceCache,
