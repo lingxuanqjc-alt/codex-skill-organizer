@@ -160,6 +160,110 @@ jobs:
             -OutputDirectory "artifacts/release/${{ steps.release.outputs.version }}" `
             -SkipProjectCheck
 
+      - name: Verify bundled internal-health transport
+        shell: pwsh
+        run: |
+          $version = '${{ steps.release.outputs.version }}'
+          $payloadRoot = [IO.Path]::GetFullPath("artifacts/work/$version/version-payload")
+          $nodePath = Join-Path $payloadRoot 'runtime\node.exe'
+          $serverPath = Join-Path $payloadRoot 'app\dist\server.mjs'
+          if (-not (Test-Path -LiteralPath $nodePath -PathType Leaf) -or
+              -not (Test-Path -LiteralPath $serverPath -PathType Leaf)) {
+            throw 'Assembled payload is missing its bundled internal-health transport.'
+          }
+
+          $dotnetTemp = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\', '/')
+          $nodeTempOutput = & $nodePath -p "require('node:os').tmpdir()"
+          if ($LASTEXITCODE -ne 0 -or -not $nodeTempOutput) {
+            throw 'Bundled Node.js could not report its temporary directory.'
+          }
+          $nodeTemp = [IO.Path]::GetFullPath(([string]$nodeTempOutput).Trim()).TrimEnd('\', '/')
+          $sameTempSpelling = [string]::Equals($dotnetTemp, $nodeTemp, [StringComparison]::OrdinalIgnoreCase)
+          $dotnetContainsTilde = $dotnetTemp.Contains('~')
+          $nodeContainsTilde = $nodeTemp.Contains('~')
+          Write-Host "TEMP-IDENTITY: spellingEqual=$sameTempSpelling dotnetContainsTilde=$dotnetContainsTilde nodeContainsTilde=$nodeContainsTilde"
+
+          $healthParent = Join-Path $dotnetTemp 'SkillOrganizerForCodex-health'
+          $healthRoot = Join-Path $healthParent ([Guid]::NewGuid().ToString('N'))
+          $descriptorPath = Join-Path $healthRoot 'runtime.json'
+          $healthProcess = $null
+
+          try {
+            $startInfo = [Diagnostics.ProcessStartInfo]::new($nodePath)
+            $startInfo.UseShellExecute = $false
+            $startInfo.CreateNoWindow = $true
+            $startInfo.WorkingDirectory = $payloadRoot
+            $startInfo.RedirectStandardOutput = $true
+            $startInfo.RedirectStandardError = $true
+            $startInfo.ArgumentList.Add($serverPath)
+            $startInfo.ArgumentList.Add('--internal-health-check')
+            $startInfo.Environment['CSO_INSTALL_ROOT'] = $payloadRoot
+            $startInfo.Environment['CSO_DESKTOP_PID'] = [string]$PID
+            $startInfo.Environment['CSO_INTERNAL_HEALTH_DATA_ROOT'] = $healthRoot
+            $startInfo.Environment['CSO_INTERNAL_HEALTH_PARENT_PID'] = [string]$PID
+            $healthProcess = [Diagnostics.Process]::new()
+            $healthProcess.StartInfo = $startInfo
+            if (-not $healthProcess.Start()) {
+              throw 'Bundled internal-health process did not start.'
+            }
+
+            $deadline = [DateTimeOffset]::UtcNow.AddSeconds(20)
+            while ([DateTimeOffset]::UtcNow -lt $deadline -and
+                   -not $healthProcess.HasExited -and
+                   -not (Test-Path -LiteralPath $descriptorPath -PathType Leaf)) {
+              Start-Sleep -Milliseconds 200
+            }
+
+            if ($healthProcess.HasExited -or -not (Test-Path -LiteralPath $descriptorPath -PathType Leaf)) {
+              $stderrText = if ($healthProcess.HasExited) { $healthProcess.StandardError.ReadToEnd() } else { '' }
+              $category = if ($stderrText.Contains('data root is outside the generated local temporary boundary')) {
+                'data-root-boundary-rejected'
+              } elseif ($stderrText.Contains('parent process does not match the direct desktop parent')) {
+                'parent-process-rejected'
+              } elseif ($stderrText.Contains('startup arguments are invalid')) {
+                'startup-arguments-rejected'
+              } elseif ($stderrText.Contains('data root is missing or not absolute')) {
+                'data-root-missing'
+              } elseif ($healthProcess.HasExited) {
+                'unclassified-process-exit'
+              } else {
+                'descriptor-timeout'
+              }
+              $exitCode = if ($healthProcess.HasExited) { $healthProcess.ExitCode } else { '<running>' }
+              Write-Host "BUNDLED-HEALTH-DIAGNOSTIC: category=$category exitCode=$exitCode"
+              throw 'Bundled internal-health transport did not publish a valid runtime descriptor.'
+            }
+
+            $descriptor = Get-Content -LiteralPath $descriptorPath -Raw | ConvertFrom-Json
+            if ([int]$descriptor.pid -ne $healthProcess.Id -or
+                $descriptor.host -ne '127.0.0.1' -or
+                $descriptor.version -ne $version -or
+                [int]$descriptor.port -le 0 -or
+                [string]::IsNullOrWhiteSpace([string]$descriptor.token)) {
+              throw 'Bundled internal-health transport published an invalid runtime descriptor.'
+            }
+          }
+          finally {
+            try {
+              if ($healthProcess -and -not $healthProcess.HasExited) {
+                $healthProcess.Kill($true)
+                $healthProcess.WaitForExit(5000) | Out-Null
+              }
+            }
+            catch [InvalidOperationException] {
+              # The exact child exited between HasExited and Kill; no process remains to clean up.
+            }
+            if ($healthProcess) { $healthProcess.Dispose() }
+            $validatedParent = [IO.Path]::GetFullPath($healthParent).TrimEnd('\', '/')
+            $validatedRoot = [IO.Path]::GetFullPath($healthRoot)
+            $parsedHealthId = [Guid]::Empty
+            if ([string]::Equals([IO.Path]::GetDirectoryName($validatedRoot), $validatedParent, [StringComparison]::OrdinalIgnoreCase) -and
+                [Guid]::TryParseExact([IO.Path]::GetFileName($validatedRoot), 'N', [ref]$parsedHealthId) -and
+                (Test-Path -LiteralPath $validatedRoot -PathType Container)) {
+              [IO.Directory]::Delete($validatedRoot, $true)
+            }
+          }
+
       - name: Publish deterministic failing-health upgrade fixture
         id: rollback_fixture
         shell: pwsh

@@ -166,6 +166,35 @@ foreach ($rollbackSmokeInvariant in @(
         throw "Release workflow upgrade-rollback smoke is missing: $rollbackSmokeInvariant"
     }
 }
+$bundledHealthTransportInvariants = @(
+    'Verify bundled internal-health transport',
+    'TEMP-IDENTITY: spellingEqual=',
+    '$startInfo.Environment[''CSO_DESKTOP_PID''] = [string]$PID',
+    '$startInfo.Environment[''CSO_INTERNAL_HEALTH_DATA_ROOT''] = $healthRoot',
+    '$startInfo.Environment[''CSO_INTERNAL_HEALTH_PARENT_PID''] = [string]$PID',
+    '$startInfo.RedirectStandardError = $true',
+    '$startInfo.ArgumentList.Add($serverPath)',
+    '$startInfo.ArgumentList.Add(''--internal-health-check'')',
+    "'data-root-boundary-rejected'",
+    'BUNDLED-HEALTH-DIAGNOSTIC: category=',
+    'if ([int]$descriptor.pid -ne $healthProcess.Id',
+    '$descriptor.host -ne ''127.0.0.1''',
+    '$descriptor.version -ne $version',
+    '$healthProcess.Kill($true)',
+    '$healthProcess.WaitForExit(5000)',
+    '$healthProcess.Dispose()',
+    '$parsedHealthId = [Guid]::Empty',
+    '[Guid]::TryParseExact([IO.Path]::GetFileName($validatedRoot), ''N'', [ref]$parsedHealthId)',
+    '[IO.Directory]::Delete($validatedRoot, $true)'
+)
+foreach ($bundledHealthTransportInvariant in $bundledHealthTransportInvariants) {
+    if (-not $releaseWorkflowText.Contains($bundledHealthTransportInvariant)) {
+        throw "Release workflow bundled internal-health transport check is missing: $bundledHealthTransportInvariant"
+    }
+}
+if ($releaseWorkflowText -match '(?im)Write-(?:Host|Output)[^\r\n]*\$stderrText') {
+    throw 'Release workflow must not print raw bundled-service stderr into the public Actions log.'
+}
 $expectedHealthProbeArguments = "-ArgumentList '--health-check' -Wait -PassThru -WindowStyle Hidden"
 if ([regex]::Matches($releaseWorkflowText, [regex]::Escape($expectedHealthProbeArguments)).Count -ne 2) {
     throw 'Expected-failure health probes must wait for the hidden child process and inspect its exit code explicitly.'
