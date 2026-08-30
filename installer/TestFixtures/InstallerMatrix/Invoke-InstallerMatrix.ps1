@@ -50,6 +50,15 @@ foreach ($requiredDirectory in @($VersionPayloadRoot, $PluginSourceRoot)) {
         throw "Required installer fixture directory is missing: $requiredDirectory"
     }
 }
+$payloadVersionPath = Join-Path $VersionPayloadRoot 'app\dist\product-version.json'
+if (-not (Test-Path -LiteralPath $payloadVersionPath -PathType Leaf)) {
+    throw 'The installer fixture payload has no product-version contract.'
+}
+$payloadVersion = Get-Content -LiteralPath $payloadVersionPath -Raw | ConvertFrom-Json
+if ($payloadVersion.schemaVersion -ne 1 -or
+    [string]$payloadVersion.productVersion -cne $Version) {
+    throw 'The installer fixture payload version does not match the requested baseline version.'
+}
 
 $productRoot = Join-Path $env:LOCALAPPDATA 'Programs\SkillOrganizerForCodex'
 $dataRoot = Join-Path $env:LOCALAPPDATA 'SkillOrganizerForCodex'
@@ -178,6 +187,7 @@ function Compile-ActivationFaultInstaller([string]$FixtureVersion, [string]$Labe
         "/DSetupIconFileSource=$SetupIconFileSource" `
         "/DOutputDirectory=$outputRoot" `
         '/DTestActivationFault=1' `
+        "/DTestPayloadVersion=$Version" `
         $InstallerSource | Out-Host
     if ($LASTEXITCODE -ne 0) { throw "Activation-fault installer compilation failed for $Label." }
     $fixtureSetup = Join-Path $outputRoot "SkillOrganizerForCodex-$FixtureVersion-win-x64-setup.exe"
@@ -188,6 +198,7 @@ function Compile-ActivationFaultInstaller([string]$FixtureVersion, [string]$Labe
 }
 
 function Assert-CompleteActivationRollback([string]$LogText) {
+    Assert-LogCount $LogText 'Completed the exact-version health preflight.' 1
     Assert-LogCount $LogText 'TEST ONLY activation fault hook fired after stable launcher replacement.' 1
     Assert-LogCount $LogText 'Activation failed; rollback complete; setup will exit with code 70:' 1
     Assert-LogCount $LogText 'Activation failed; rollback incomplete; setup will exit with code 74:' 0

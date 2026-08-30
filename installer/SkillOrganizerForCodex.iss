@@ -20,6 +20,21 @@
   #error SetupIconFileSource must point to the generated original ICO.
 #endif
 
+#ifdef TestActivationFault
+  #ifndef TestPayloadVersion
+    #error TestActivationFault requires the exact embedded TestPayloadVersion.
+  #endif
+#else
+  #ifdef TestPayloadVersion
+    #error TestPayloadVersion is only allowed in the activation-fault fixture.
+  #endif
+#endif
+#ifdef TestPayloadVersion
+  #define PreflightPayloadVersion TestPayloadVersion
+#else
+  #define PreflightPayloadVersion AppVersion
+#endif
+
 #define ProductName "Skill Organizer for Codex"
 #define ProductId "codex-skill-organizer"
 #define ProductExe "SkillOrganizerForCodex.exe"
@@ -555,7 +570,7 @@ begin
   Arguments :=
     AddQuotes(HelperPath) +
     ' --data-dir ' + AddQuotes(DataRoot()) +
-    ' --version ' + AddQuotes('{#AppVersion}');
+    ' --version ' + AddQuotes('{#PreflightPayloadVersion}');
 
   if not Exec(NodePath, Arguments, TemporaryVersionRoot(), SW_HIDE,
     ewWaitUntilTerminated, ExitCode) then

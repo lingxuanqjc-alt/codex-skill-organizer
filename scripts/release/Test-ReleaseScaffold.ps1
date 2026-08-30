@@ -471,6 +471,11 @@ foreach ($matrixInvariant in @(
     "if (`$env:GITHUB_ACTIONS -ne 'true')",
     "[ValidateSet('Transaction', 'Selection')]",
     "'/DTestActivationFault=1'",
+    '"/DTestPayloadVersion=$Version"',
+    "'Completed the exact-version health preflight.' 1",
+    '$payloadVersion.schemaVersion -ne 1',
+    '[string]$payloadVersion.productVersion -cne $Version',
+    "'The installer fixture payload version does not match the requested baseline version.'",
     "Compile-ActivationFaultInstaller `$Version 'same-version'",
     '$newVersion = "$($Matches[1]).$($Matches[2]).$([int]$Matches[3] + 1)-activation-fixture"',
     '$sameLogText = Invoke-Setup $sameVersionFaultSetup "$silentBase /TYPE=desktop /COMPONENTS=workbench" 70 $sameLog',
@@ -578,6 +583,9 @@ $installerInvariants = @(
     'Health-check output:',
     'Bundled health-check process exited with code',
     'Installer preflight completed before the normal file-copy stage.',
+    '#define PreflightPayloadVersion TestPayloadVersion',
+    '#define PreflightPayloadVersion AppVersion',
+    "AddQuotes('{#PreflightPayloadVersion}')",
     'tools\backup-state.mjs',
     '--data-dir',
     '--version',
@@ -667,17 +675,42 @@ foreach ($requiredPostInstallInvariant in @(
         throw "Installer residual-failure contract is missing: $requiredPostInstallInvariant"
     }
 }
-$testFaultStart = $installerText.IndexOf('#ifdef TestActivationFault', [StringComparison]::Ordinal)
-$testFaultEnd = $installerText.IndexOf('#endif', $testFaultStart, [StringComparison]::Ordinal)
-if ($testFaultStart -lt 0 -or $testFaultEnd -le $testFaultStart) {
+$testFaultMarker = $installerText.IndexOf(
+    'TEST ONLY deterministic post-copy activation failure.',
+    [StringComparison]::Ordinal)
+$testFaultStart = if ($testFaultMarker -ge 0) {
+    $installerText.LastIndexOf('#ifdef TestActivationFault', $testFaultMarker, [StringComparison]::Ordinal)
+} else {
+    -1
+}
+$testFaultEnd = if ($testFaultMarker -ge 0) {
+    $installerText.IndexOf('#endif', $testFaultMarker, [StringComparison]::Ordinal)
+} else {
+    -1
+}
+if ($testFaultStart -lt 0 -or $testFaultMarker -le $testFaultStart -or $testFaultEnd -le $testFaultMarker) {
     throw 'Activation fault injection must be enclosed in the test-only Inno preprocessor guard.'
 }
-$testFaultBlock = $installerText.Substring($testFaultStart, $testFaultEnd - $testFaultStart)
+$testFaultBlock = $installerText.Substring($testFaultStart, $testFaultEnd - $testFaultStart + '#endif'.Length)
 if (-not $testFaultBlock.Contains('TEST ONLY deterministic post-copy activation failure.')) {
     throw 'The guarded activation fault does not fail deterministically.'
 }
-if ($buildReleaseText.Contains('TestActivationFault')) {
-    throw 'The production release builder must never enable the test-only activation fault.'
+$testPayloadVersionGuard = @'
+#ifdef TestActivationFault
+  #ifndef TestPayloadVersion
+    #error TestActivationFault requires the exact embedded TestPayloadVersion.
+  #endif
+#else
+  #ifdef TestPayloadVersion
+    #error TestPayloadVersion is only allowed in the activation-fault fixture.
+  #endif
+#endif
+'@
+if (-not $installerText.Contains($testPayloadVersionGuard.Trim())) {
+    throw 'The synthetic layout-version fixture must require an exact payload version without exposing the override to production builds.'
+}
+if ($buildReleaseText.Contains('TestActivationFault') -or $buildReleaseText.Contains('TestPayloadVersion')) {
+    throw 'The production release builder must never enable activation-fault test overrides.'
 }
 $descriptorGateIndex = $installerText.IndexOf('if not HasRuntimeDescriptor() then', [StringComparison]::Ordinal)
 $launcherExistenceIndex = $installerText.IndexOf('if not FileExists(LauncherPath) then', $descriptorGateIndex, [StringComparison]::Ordinal)
