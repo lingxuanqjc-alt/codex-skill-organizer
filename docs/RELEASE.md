@@ -81,7 +81,10 @@ pwsh -NoProfile -File .\scripts\release\Build-Release.ps1 `
 
 - `ci.yml` 验证类型、测试、生产 bundle、插件/marketplace 安全契约、依赖审计和桌面 x64 publish。
 - `release.yml` 在干净 Windows runner 下载并校验 runtime lock 指定的 Node ZIP，构建安装器和 portable 包，执行真实安装/健康检查/普通卸载保留/彻底删除，以及 portable 冒烟。
+- 手动 `workflow_dispatch` 只是发布 dry-run：它覆盖 `build-and-smoke` 并上传保留 30 天的 Actions artifact，但会跳过 tag 祖先检查、固定发布说明和 publish job，不创建 GitHub Release。
+- 推送 tag 前，最终 tag 提交必须同时取得普通 CI 与手动完整 dry-run 成功；对应 SHA 和证据应记录在 `docs/ACCEPTANCE.md` 或发布检查记录中。
 - tag 必须是 `v<package.json version>`。tag job 中任何不一致都会在创建 GitHub Release 前失败。
+- 推送 tag 前必须重新确认仓库仍启用 Immutable Releases。发布工作流先下载并复验 Actions artifact，再创建 draft 并上传全部资产；再次确认远端 tag 后才发布。发布后再确认 Release 显示为 immutable 并核验 release attestation。Immutable GitHub Release 只在发布后锁定 tag 与资产，不能用手动 Actions artifact 的 digest 或保留策略代替。参见 [GitHub 官方说明](https://docs.github.com/en/code-security/concepts/supply-chain-security/immutable-releases)。
 
 发布前人工确认：README 已说明非 OpenAI 官方、未签名 SmartScreen 风险、普通卸载保留数据、0.1.1 JSON 不迁移；`CHANGELOG.md` 日期与 tag 一致；测试记录没有把未执行项写成通过。
 

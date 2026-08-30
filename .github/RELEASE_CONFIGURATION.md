@@ -5,8 +5,10 @@
 - A `v0.2.*` tag builds, smoke-tests, and publishes a GitHub Release. The tag
   commit must be part of `origin/main` history, and the tag version must exactly
   match `package.json`.
-- A manual `workflow_dispatch` builds and uploads the same Actions artifact but
-  does not create a GitHub Release. Its version must also match `package.json`.
+- A manual `workflow_dispatch` builds the same nine-file release asset set and
+  uploads it as a 30-day Actions artifact, but does not create a GitHub Release.
+  Its version must also match `package.json`, and all tag-ancestry, fixed-notes,
+  and publish steps are skipped.
 - Runtime URL, version, npm evidence, and SHA-256 values come only from the
   committed `scripts/release/runtime-lock.json`; no repository variables named
   `NODE_RUNTIME_URL` or `NODE_RUNTIME_SHA256` are read.
@@ -19,7 +21,8 @@
 - Every checkout sets `persist-credentials: false`.
 - The build-and-smoke job has only `contents: read`. It runs the complete source,
   browser, installer, portable, rollback, dependency-audit, and release-output
-  gates before uploading immutable Actions artifacts.
+  gates before uploading a digest-bearing Actions artifact retained for 30 days.
+  That dry-run artifact is not an Immutable GitHub Release.
 - The separate publish job is the only job with `contents: write`. It does not
   check out or execute repository code: it downloads the preceding job's
   artifacts, rechecks the exact asset names, SHA-256 coverage, release metadata,
@@ -28,6 +31,17 @@
 The hosted Windows runner must expose Inno Setup 6 at one of the explicit paths
 checked by the workflow. If the runner image changes, the workflow fails instead
 of downloading an unpinned installer compiler.
+
+## Repository release immutability
+
+- Repository Immutable Releases must remain enabled immediately before a tag is
+  pushed. Because the repository setting is not owner-enforced, the release
+  operator rechecks it as a final gate.
+- The publish job verifies the downloaded Actions artifact, creates a draft,
+  uploads the complete asset set, and publishes only after the remote tag still
+  resolves to the built commit.
+- After publication, the Release must report as immutable. Any correction uses
+  a new version; the published tag and assets are never replaced.
 
 ## Asset contract
 

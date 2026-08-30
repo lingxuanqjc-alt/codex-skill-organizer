@@ -642,7 +642,7 @@ jobs:
             -ExpectedVersion '${{ steps.release.outputs.version }}' `
             -RequireInstaller
 
-      - name: Upload immutable snapshot artifacts
+      - name: Upload verified release dry-run assets
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: SkillOrganizerForCodex-${{ steps.release.outputs.version }}-windows-x64

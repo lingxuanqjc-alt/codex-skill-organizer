@@ -47,12 +47,17 @@ Skill Organizer for Codex 是一个本地优先的 Windows 工作台，用来对
 
 ## 安装与升级
 
-从对应 GitHub snapshot 下载：
+从对应 GitHub Release 下载。只有 `v<version>` tag 触发的工作流会创建正式 Release；手动运行 `workflow_dispatch` 生成的 Actions artifact 只保留 30 天，用于发布演练，不是 GitHub Release 资产，也不作为正式分发入口。
 
 - `SkillOrganizerForCodex-<version>-win-x64-setup.exe`：当前用户安装器；
 - `SkillOrganizerForCodex-<version>-win-x64-portable.zip`：便携包；
 - `SHA256SUMS.txt`：所有下载资产的 SHA-256；
-- `skill-organizer-for-codex.cdx.json` 和 `THIRD_PARTY_NOTICES.txt`：SBOM 与第三方许可证清单。
+- `skill-organizer-for-codex.cdx.json`：CycloneDX SBOM；
+- `THIRD_PARTY_NOTICES.txt`：第三方许可证清单；
+- `RELEASE-METADATA.json`：版本、平台与构建来源元数据；
+- `CONTENT-MANIFEST-version-<version>.json`：桌面基础版本目录内容清单；
+- `CONTENT-MANIFEST-version-full-<version>.json`：含可选 Codex 插件的完整版本目录内容清单；
+- `CONTENT-MANIFEST-portable-<version>.json`：便携包内部内容清单。
 
 熟人测试阶段的 0.2.x 安装包**未进行代码签名**，Windows SmartScreen 可能显示警告。先对照 `SHA256SUMS.txt` 验证哈希，再决定是否运行：
 
