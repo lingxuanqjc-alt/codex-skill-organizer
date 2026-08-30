@@ -100,6 +100,21 @@ $installerMatrixAst = [System.Management.Automation.Language.Parser]::ParseFile(
 if ($installerMatrixParseErrors.Count -ne 0) {
     throw "Installer matrix fixture does not parse: $($installerMatrixParseErrors[0].Message)"
 }
+$installStateDiagnosticLine = 'Write-Host "INSTALL-STATE-DIAGNOSTIC: phase=$Phase productRootMatches=$([string]$expected.productRoot -ceq [string]$actual.productRoot) shortcutsMatch=$([string]$expected.shortcuts -ceq [string]$actual.shortcuts) uninstallRegistryMatches=$([string]$expected.uninstallRegistry -ceq [string]$actual.uninstallRegistry) marketplaceMatches=$([string]$expected.marketplace -ceq [string]$actual.marketplace) pluginMatches=$([string]$expected.plugin -ceq [string]$actual.plugin)"'
+if ([regex]::Matches($installerMatrixText, [regex]::Escape($installStateDiagnosticLine)).Count -ne 1 -or
+    [regex]::Matches($installerMatrixText, 'INSTALL-STATE-DIAGNOSTIC:').Count -ne 1) {
+    throw 'Installer transaction diagnostics must expose only the fixed component-match boolean allowlist.'
+}
+foreach ($installStateDiagnosticPhase in @('same-version', 'new-version', 'clean-first')) {
+    if ([regex]::Matches(
+            $installerMatrixText,
+            [regex]::Escape("Write-InstallStateDifferenceDiagnostic '$installStateDiagnosticPhase'")).Count -ne 1) {
+        throw "Installer transaction diagnostics are missing the fixed phase: $installStateDiagnosticPhase"
+    }
+}
+if ($installerMatrixText -match '(?im)(?:Write-(?:Host|Output|Error|Warning|Verbose|Debug)|Out-File|Add-Content|Set-Content)[^\r\n]*\$(?:ExpectedSnapshot|ActualSnapshot)\b') {
+    throw 'Installer transaction diagnostics must never print raw install-state snapshots.'
+}
 $installerMatrixExitStatements = @($installerMatrixAst.FindAll({
     param($Node)
     $Node -is [System.Management.Automation.Language.ExitStatementAst]
@@ -239,6 +254,28 @@ foreach ($rollbackSmokeInvariant in @(
     if (-not $releaseWorkflowText.Contains($rollbackSmokeInvariant)) {
         throw "Release workflow upgrade-rollback smoke is missing: $rollbackSmokeInvariant"
     }
+}
+$cleanFaultRegistryQueryIndex = $releaseWorkflowText.IndexOf(
+    '& "$env:SystemRoot/System32/reg.exe" query',
+    [StringComparison]::Ordinal)
+$cleanFaultRegistryCaptureIndex = $releaseWorkflowText.IndexOf(
+    '$cleanFaultUninstallRegistrationExists = $LASTEXITCODE -eq 0',
+    $cleanFaultRegistryQueryIndex,
+    [StringComparison]::Ordinal)
+$cleanFaultRegistryResetIndex = $releaseWorkflowText.IndexOf(
+    '$global:LASTEXITCODE = 0',
+    $cleanFaultRegistryCaptureIndex,
+    [StringComparison]::Ordinal)
+$cleanFaultRegistryFailureIndex = $releaseWorkflowText.IndexOf(
+    'if ($cleanFaultUninstallRegistrationExists) { throw ''Clean first-install preflight failure created an uninstall registration.'' }',
+    $cleanFaultRegistryResetIndex,
+    [StringComparison]::Ordinal)
+if ($cleanFaultRegistryQueryIndex -lt 0 -or
+    $cleanFaultRegistryCaptureIndex -le $cleanFaultRegistryQueryIndex -or
+    $cleanFaultRegistryResetIndex -le $cleanFaultRegistryCaptureIndex -or
+    $cleanFaultRegistryFailureIndex -le $cleanFaultRegistryResetIndex -or
+    [regex]::Matches($releaseWorkflowText, [regex]::Escape('$global:LASTEXITCODE = 0')).Count -ne 1) {
+    throw 'The expected absent-registry probe must capture and clear its handled native exit code before the GitHub shell epilogue.'
 }
 $maintenanceShutdownInvocation = @'
 & ./scripts/release/Invoke-InstalledServiceMaintenanceShutdown.ps1 `
@@ -754,6 +791,41 @@ if ($stableUpdateIndex -lt 0 -or $stableNextIndex -le $stableUpdateIndex -or
     $stableFlagsIndex -le $stableMoveIndex -or $activateLauncherIndex -lt 0 -or
     $commitManifestIndex -le $activateLauncherIndex) {
     throw 'Stable launcher activation must use a write-through atomic replacement before committing current.json.'
+}
+$captureRollbackIndex = $installerText.IndexOf('procedure CaptureActivationRollbackState();', [StringComparison]::Ordinal)
+$currentExistsIndex = $installerText.IndexOf(
+    'PreviousCurrentExists := FileExists(CurrentManifestPath());',
+    $captureRollbackIndex,
+    [StringComparison]::Ordinal)
+$currentBackupIndex = $installerText.IndexOf(
+    'if PreviousCurrentExists and (not CopyFile(',
+    $currentExistsIndex,
+    [StringComparison]::Ordinal)
+$currentBackupSourceIndex = $installerText.IndexOf(
+    'CurrentManifestPath(),',
+    $currentBackupIndex,
+    [StringComparison]::Ordinal)
+$restoreCurrentIndex = $installerText.IndexOf('function RestoreCurrentManifest(): Boolean;', [StringComparison]::Ordinal)
+$restoreCurrentBackupIndex = $installerText.IndexOf(
+    "BackupPath := AddBackslash(RollbackRoot()) + 'current-before-{#AppVersion}.json';",
+    $restoreCurrentIndex,
+    [StringComparison]::Ordinal)
+$restoreCurrentCopyIndex = $installerText.IndexOf(
+    'Result := FileExists(BackupPath) and CopyFile(BackupPath, RestorePath, False);',
+    $restoreCurrentBackupIndex,
+    [StringComparison]::Ordinal)
+$restoreCurrentMoveIndex = $installerText.IndexOf(
+    'Result := MoveFileEx(',
+    $restoreCurrentCopyIndex,
+    [StringComparison]::Ordinal)
+if ($captureRollbackIndex -lt 0 -or $currentExistsIndex -le $captureRollbackIndex -or
+    $currentBackupIndex -le $currentExistsIndex -or $currentBackupSourceIndex -le $currentBackupIndex -or
+    $restoreCurrentIndex -lt 0 -or $restoreCurrentBackupIndex -le $restoreCurrentIndex -or
+    $restoreCurrentCopyIndex -le $restoreCurrentBackupIndex -or
+    $restoreCurrentMoveIndex -le $restoreCurrentCopyIndex -or
+    $installerText.Contains('PreviousCurrentJson') -or
+    $installerText.Contains('SaveStringToFile(RestorePath')) {
+    throw 'Activation rollback must preserve the exact current.json bytes, timestamp, and attributes through CopyFile before atomic replacement.'
 }
 $marketplaceHelperText = Get-Content -LiteralPath (Join-Path $repoRoot 'installer\tools\manage-personal-marketplace.mjs') -Raw
 if (-not $marketplaceHelperText.Contains('plugin-update-pending.json')) {

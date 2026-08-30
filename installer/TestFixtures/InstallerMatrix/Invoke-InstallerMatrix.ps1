@@ -120,6 +120,16 @@ function Get-InstallStateSnapshot() {
     } | ConvertTo-Json -Compress)
 }
 
+function Write-InstallStateDifferenceDiagnostic(
+    [ValidateSet('same-version', 'new-version', 'clean-first')]
+    [string]$Phase,
+    [string]$ExpectedSnapshot,
+    [string]$ActualSnapshot) {
+    $expected = $ExpectedSnapshot | ConvertFrom-Json
+    $actual = $ActualSnapshot | ConvertFrom-Json
+    Write-Host "INSTALL-STATE-DIAGNOSTIC: phase=$Phase productRootMatches=$([string]$expected.productRoot -ceq [string]$actual.productRoot) shortcutsMatch=$([string]$expected.shortcuts -ceq [string]$actual.shortcuts) uninstallRegistryMatches=$([string]$expected.uninstallRegistry -ceq [string]$actual.uninstallRegistry) marketplaceMatches=$([string]$expected.marketplace -ceq [string]$actual.marketplace) pluginMatches=$([string]$expected.plugin -ceq [string]$actual.plugin)"
+}
+
 function Assert-LogCount([string]$Text, [string]$Needle, [int]$Expected) {
     $actual = [regex]::Matches($Text, [regex]::Escape($Needle)).Count
     if ($actual -ne $Expected) {
@@ -211,7 +221,9 @@ if ($Mode -eq 'Transaction') {
     $sameLog = Join-Path $env:RUNNER_TEMP 'cso-activation-same-version.log'
     $sameLogText = Invoke-Setup $sameVersionFaultSetup "$silentBase /TYPE=desktop /COMPONENTS=workbench" 70 $sameLog
     Assert-CompleteActivationRollback $sameLogText
-    if ((Get-InstallStateSnapshot) -ne $baselineState) {
+    $sameVersionState = Get-InstallStateSnapshot
+    if ($sameVersionState -ne $baselineState) {
+        Write-InstallStateDifferenceDiagnostic 'same-version' $baselineState $sameVersionState
         throw 'Same-version activation rollback did not restore the complete install state byte-for-byte.'
     }
 
@@ -221,7 +233,9 @@ if ($Mode -eq 'Transaction') {
     $newLog = Join-Path $env:RUNNER_TEMP 'cso-activation-new-version.log'
     $newLogText = Invoke-Setup $newVersionFaultSetup "$silentBase /TYPE=desktop /COMPONENTS=workbench" 70 $newLog
     Assert-CompleteActivationRollback $newLogText
-    if ((Get-InstallStateSnapshot) -ne $baselineState) {
+    $newVersionState = Get-InstallStateSnapshot
+    if ($newVersionState -ne $baselineState) {
+        Write-InstallStateDifferenceDiagnostic 'new-version' $baselineState $newVersionState
         throw 'Old-to-new activation rollback did not restore the complete install state byte-for-byte.'
     }
     if (Test-Path -LiteralPath (Join-Path $productRoot "versions\$newVersion")) {
@@ -234,7 +248,9 @@ if ($Mode -eq 'Transaction') {
     $cleanLog = Join-Path $env:RUNNER_TEMP 'cso-activation-clean-first-install.log'
     $cleanLogText = Invoke-Setup $newVersionFaultSetup "$silentBase /TYPE=full" 70 $cleanLog
     Assert-CompleteActivationRollback $cleanLogText
-    if ((Get-InstallStateSnapshot) -ne $cleanState) {
+    $cleanFirstState = Get-InstallStateSnapshot
+    if ($cleanFirstState -ne $cleanState) {
+        Write-InstallStateDifferenceDiagnostic 'clean-first' $cleanState $cleanFirstState
         throw 'Clean first-install activation rollback did not restore the absent program, registry, shortcut, plugin, and marketplace state.'
     }
     if ((Test-Path -LiteralPath $productRoot) -or (Test-Path -LiteralPath $personalPlugin)) {

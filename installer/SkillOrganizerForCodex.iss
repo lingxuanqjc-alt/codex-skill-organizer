@@ -146,7 +146,6 @@ function GetDriveType(RootPathName: string): Cardinal;
   external 'GetDriveTypeW@kernel32.dll stdcall';
 
 var
-  PreviousCurrentJson: AnsiString;
   PreviousCurrentExists: Boolean;
   PreviousStableExists: Boolean;
   StableLauncherBackupPath: string;
@@ -767,15 +766,15 @@ begin
       '检测到上一次激活留下的临时文件，因此安装在写入前停止。' + #13#10 +
       'A stale activation journal file exists, so setup stopped before writing program files.');
   end;
-  PreviousCurrentExists := LoadStringFromFile(CurrentManifestPath(), PreviousCurrentJson);
+  PreviousCurrentExists := FileExists(CurrentManifestPath());
   PreviousStableExists := FileExists(StableLauncherPath());
   StableLauncherBackupPath := AddBackslash(RollbackRoot()) + 'launcher-before-{#AppVersion}.exe';
 
   if not ForceDirectories(RollbackRoot()) then
     RaiseException('无法创建升级回滚目录 / Unable to create the upgrade rollback directory.');
-  if PreviousCurrentExists and (not SaveStringToFile(
+  if PreviousCurrentExists and (not CopyFile(
+    CurrentManifestPath(),
     AddBackslash(RollbackRoot()) + 'current-before-{#AppVersion}.json',
-    PreviousCurrentJson,
     False)) then
   begin
     RaiseException('无法保存升级回滚清单 / Unable to save the upgrade rollback manifest.');
@@ -837,13 +836,15 @@ end;
 
 function RestoreCurrentManifest(): Boolean;
 var
+  BackupPath: string;
   RestorePath: string;
 begin
   if PreviousCurrentExists then
   begin
+    BackupPath := AddBackslash(RollbackRoot()) + 'current-before-{#AppVersion}.json';
     RestorePath := CurrentManifestPath() + '.rollback-{#AppVersion}';
     DeleteFile(RestorePath);
-    Result := SaveStringToFile(RestorePath, PreviousCurrentJson, False);
+    Result := FileExists(BackupPath) and CopyFile(BackupPath, RestorePath, False);
     if Result then
       Result := MoveFileEx(
         RestorePath,

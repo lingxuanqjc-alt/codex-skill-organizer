@@ -583,7 +583,9 @@ jobs:
           }
           & "$env:SystemRoot/System32/reg.exe" query `
             'HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\{A8D9081E-C5DB-4B48-A772-574427CA3A27}_is1' 2>$null | Out-Null
-          if ($LASTEXITCODE -eq 0) { throw 'Clean first-install preflight failure created an uninstall registration.' }
+          $cleanFaultUninstallRegistrationExists = $LASTEXITCODE -eq 0
+          $global:LASTEXITCODE = 0
+          if ($cleanFaultUninstallRegistrationExists) { throw 'Clean first-install preflight failure created an uninstall registration.' }
           if ((Get-FileSnapshot @($marketplacePath)) -ne $marketplaceBeforeCleanFault -or
               (Test-Path -LiteralPath $personalPlugin)) {
             throw 'Clean first-install preflight failure crossed the optional plugin boundary.'
