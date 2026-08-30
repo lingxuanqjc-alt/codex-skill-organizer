@@ -385,7 +385,11 @@ jobs:
 
           $stableLauncher = Join-Path $productRoot 'SkillOrganizerForCodex.exe'
           $currentPointer = Join-Path $productRoot 'current.json'
-          $seedProcess = Start-Process -FilePath $stableLauncher -ArgumentList @('--headless', '--ensure-service') -Wait -PassThru -WindowStyle Hidden
+          $seedProcess = Start-Process -FilePath $stableLauncher -ArgumentList @('--headless', '--ensure-service') -PassThru -WindowStyle Hidden
+          if (-not $seedProcess.WaitForExit(60000)) {
+            try { $seedProcess.Kill($true) } catch [InvalidOperationException] { }
+            throw 'Timed out while seeding the installed SQLite database for upgrade-backup smoke.'
+          }
           if ($seedProcess.ExitCode -ne 0) { throw 'Unable to seed the installed SQLite database for upgrade-backup smoke.' }
           $shutdownProcess = Start-Process -FilePath $stableLauncher -ArgumentList '--shutdown-for-maintenance' -Wait -PassThru -WindowStyle Hidden
           if ($shutdownProcess.ExitCode -ne 0) { throw 'Unable to stop the seeded backend before upgrade smoke.' }
