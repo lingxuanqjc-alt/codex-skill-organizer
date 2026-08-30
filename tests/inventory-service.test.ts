@@ -26,6 +26,8 @@ import {
   UnsupportedSchemaVersionError,
 } from "../src/v2/index.js";
 
+const localPathLocationProbe = async (): Promise<"local"> => "local";
+
 async function waitUntil(predicate: () => boolean, timeoutMs = 3_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (!predicate()) {
@@ -212,6 +214,7 @@ test("inventory overlays runtime state and persists manual classification withou
       statePath,
       appServer,
       now: () => new Date("2026-08-29T00:00:00.000Z"),
+      pathLocationProbe: localPathLocationProbe,
     });
 
     const initial = await service.initialize();
@@ -264,6 +267,7 @@ test("ordinary SKILL.md version metadata is display-only and never becomes insta
       statePath: path.join(directory, "organizer.db"),
       appServer: null,
       updateService,
+      pathLocationProbe: localPathLocationProbe,
     });
     const snapshot = await service.initialize();
     assert.equal((await service.refresh(true)).revision, snapshot.revision, "a no-op rescan must not make safe-write preconditions stale");
@@ -300,6 +304,7 @@ test("filesystem events rescan only the changed root while manual refresh rescan
       statePath: path.join(directory, "organizer.db"),
       appServer: null,
       scanRoots,
+      pathLocationProbe: localPathLocationProbe,
       watchRoot: (rootPath, listener) => {
         listeners.set(rootPath, listener);
         return fakeWatcher();
@@ -336,6 +341,7 @@ test("watcher creation and background incremental failures remain visible in sca
       roots: [{ id: "watch-failure", label: "Watch failure", path: root, kind: "fixture" }],
       statePath: path.join(directory, "watcher.db"),
       appServer: null,
+      pathLocationProbe: localPathLocationProbe,
       watchRoot: () => {
         throw new Error("recursive watch unavailable");
       },
@@ -351,6 +357,7 @@ test("watcher creation and background incremental failures remain visible in sca
       roots: [{ id: "incremental", label: "Incremental", path: root, kind: "fixture" }],
       statePath: path.join(directory, "incremental.db"),
       appServer: null,
+      pathLocationProbe: localPathLocationProbe,
       scanRoots: async (roots) => {
         scanCalls += 1;
         if (scanCalls > 1 && rejectNextIncrement) {
@@ -388,6 +395,7 @@ test("app-server skillsChanged refreshes runtime state without rescanning disk r
       roots: [{ id: "fixture", label: "Fixture", path: root, kind: "fixture" }],
       statePath: path.join(directory, "organizer.db"),
       appServer,
+      pathLocationProbe: localPathLocationProbe,
       scanRoots: async (roots) => {
         diskScans += 1;
         return scanSkillRoots(roots);
@@ -491,6 +499,7 @@ test("low-confidence model classification is surfaced as pending", async () => {
       roots: [{ id: "fixture", label: "Fixture", path: root, kind: "fixture" }],
       statePath: path.join(directory, "organizer.db"),
       appServer: null,
+      pathLocationProbe: localPathLocationProbe,
     });
     const initial = await service.initialize();
     const updated = await service.applyClassification({
@@ -520,6 +529,7 @@ test("inventory suggestion acceptance is all-or-nothing when any selected skill 
       roots: [{ id: "fixture", label: "Fixture", path: root, kind: "fixture" }],
       statePath: path.join(directory, "organizer.db"),
       appServer: null,
+      pathLocationProbe: localPathLocationProbe,
     });
     const initial = await service.initialize();
     const openId = initial.skills.find((skill) => skill.name === "open-suggestion")!.skillId;
@@ -615,6 +625,7 @@ test("batch enablement stops after a failure and reports success, failure, and n
       roots: [{ id: "fixture", label: "Fixture", path: root, kind: "fixture" }],
       statePath: path.join(directory, "organizer.db"),
       appServer,
+      pathLocationProbe: localPathLocationProbe,
     });
     const initial = await service.initialize();
     const ids = paths.map((skillPath) => initial.skills.find((skill) => skill.absolutePath === skillPath)!.skillId);
@@ -651,6 +662,7 @@ test("a future database schema fails closed without installing an older supporte
       roots: [],
       statePath,
       appServer: null,
+      pathLocationProbe: localPathLocationProbe,
       databaseRecoveryOperations: observeDurableFileOperations((operation) => recoveryOperations.push(operation)),
     });
     let initializationError: unknown;
@@ -695,6 +707,7 @@ test("a non-corruption SQLite I/O failure is rethrown without attempting snapsho
       roots: [],
       statePath,
       appServer: null,
+      pathLocationProbe: localPathLocationProbe,
       databaseRecoveryOperations: observeDurableFileOperations((operation) => recoveryOperations.push(operation)),
     });
     let initializationError: unknown;
@@ -729,6 +742,7 @@ test("a corrupt SQLite database is preserved and recovered from the newest write
       statePath,
       appServer: null,
       now: () => new Date("2026-08-30T00:00:00.000Z"),
+      pathLocationProbe: localPathLocationProbe,
     });
     const initial = await first.initialize();
     await first.applyClassification({
@@ -758,6 +772,7 @@ test("a corrupt SQLite database is preserved and recovered from the newest write
       appServer: null,
       databaseRecoveryOperations: recoveryOperations,
       now: () => new Date("2026-08-30T00:01:00.000Z"),
+      pathLocationProbe: localPathLocationProbe,
     });
     const snapshot = await recovered.initialize();
     assert.equal(snapshot.skills[0]?.favorite, true);
@@ -788,6 +803,7 @@ test("a snapshot that still cannot open rolls back the archived database group",
       statePath,
       appServer: null,
       now: () => new Date("2026-08-30T00:00:00.000Z"),
+      pathLocationProbe: localPathLocationProbe,
     });
     const initial = await first.initialize();
     await first.applyClassification({
@@ -821,6 +837,7 @@ test("a snapshot that still cannot open rolls back the archived database group",
       appServer: null,
       databaseRecoveryOperations: recoveryOperations,
       now: () => new Date("2026-08-30T00:01:00.000Z"),
+      pathLocationProbe: localPathLocationProbe,
     });
     await assert.rejects(
       () => recovered.initialize(),
@@ -847,7 +864,12 @@ test("portable workspace settings persist in SQLite while custom roots stay read
   let first: InventoryService | undefined;
   let reopened: InventoryService | undefined;
   try {
-    first = new InventoryService({ roots: [], statePath, appServer: null });
+    first = new InventoryService({
+      roots: [],
+      statePath,
+      appServer: null,
+      pathLocationProbe: localPathLocationProbe,
+    });
     let snapshot = await first.initialize();
     snapshot = await first.addCustomRoot(customRoot, "同步盘 Skills", snapshot.revision);
     const configured = snapshot.configuredRoots?.[0];
@@ -884,7 +906,12 @@ test("portable workspace settings persist in SQLite while custom roots stay read
     await first.close();
     first = undefined;
 
-    reopened = new InventoryService({ roots: [], statePath, appServer: null });
+    reopened = new InventoryService({
+      roots: [],
+      statePath,
+      appServer: null,
+      pathLocationProbe: localPathLocationProbe,
+    });
     const persisted = await reopened.initialize();
     assert.equal(persisted.configuredRoots?.[0]?.managementAuthorized, true);
     assert.equal(persisted.selectedProjectPath, physicalProjectRoot);

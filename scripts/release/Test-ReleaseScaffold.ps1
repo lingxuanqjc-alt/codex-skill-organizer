@@ -38,6 +38,9 @@ if ($package.scripts.'check:version' -ne 'node scripts/version-contract.mjs --ch
 if ($package.scripts.'test:path-probe:windows' -ne 'tsx --test --test-concurrency=1 tests/windows-path-probe.test.ts') {
     throw 'package.json must keep the real Windows path probe isolated and serial.'
 }
+if ($package.scripts.'test:health-probe:windows' -ne 'tsx --test --test-concurrency=1 tests/server-data-directory.test.ts') {
+    throw 'package.json must keep the real Windows health transport isolated and serial.'
+}
 & node (Join-Path $repoRoot 'scripts\version-contract.mjs') --check
 if ($LASTEXITCODE -ne 0) { throw 'Repository product version derivatives are stale.' }
 if (-not (Test-Path -LiteralPath $securityGatePath -PathType Leaf)) {
@@ -113,7 +116,10 @@ foreach ($workflowEntry in @(
     foreach ($pathProbeInvariant in @(
         'Verify real Windows drive probe in isolation',
         "CSO_RUN_REAL_WINDOWS_PATH_PROBE: '1'",
-        'run: npm run test:path-probe:windows'
+        'run: npm run test:path-probe:windows',
+        'Verify real Windows health transport in isolation',
+        "CSO_RUN_REAL_WINDOWS_HEALTH_PROBE: '1'",
+        'run: npm run test:health-probe:windows'
     )) {
         if (-not $workflowEntry.Text.Contains($pathProbeInvariant)) {
             throw "$($workflowEntry.Name) workflow omits the isolated real Windows path probe: $pathProbeInvariant"

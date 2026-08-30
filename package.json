@@ -27,6 +27,7 @@
     "dev": "tsx src/server/main.ts",
     "start": "node dist/server.mjs",
     "test": "tsx --test --test-concurrency=4 tests/**/*.test.ts",
+    "test:health-probe:windows": "tsx --test --test-concurrency=1 tests/server-data-directory.test.ts",
     "test:path-probe:windows": "tsx --test --test-concurrency=1 tests/windows-path-probe.test.ts",
     "test:browser": "playwright test",
     "typecheck": "tsc --noEmit",

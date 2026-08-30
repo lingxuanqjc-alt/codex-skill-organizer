@@ -110,6 +110,11 @@ jobs:
           CSO_RUN_REAL_WINDOWS_PATH_PROBE: '1'
         run: npm run test:path-probe:windows
 
+      - name: Verify real Windows health transport in isolation
+        env:
+          CSO_RUN_REAL_WINDOWS_HEALTH_PROBE: '1'
+        run: npm run test:health-probe:windows
+
       - name: Install Chromium for release scaffold icon generation
         run: npx playwright install chromium
 

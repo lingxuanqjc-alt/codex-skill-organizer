@@ -24,7 +24,7 @@ async function exists(candidate: string): Promise<boolean> {
 }
 
 async function waitForFile(candidate: string, childExited: () => boolean): Promise<void> {
-  for (let attempt = 0; attempt < 200; attempt += 1) {
+  for (let attempt = 0; attempt < 600; attempt += 1) {
     if (await exists(candidate)) return;
     if (childExited()) throw new Error(`health-check server exited before writing ${candidate}`);
     await new Promise((resolve) => setTimeout(resolve, 50));
@@ -91,8 +91,8 @@ test("internal health root requires the direct desktop parent and generated loca
 });
 
 test("internal health server creates its database and descriptor without touching the release data root", {
-  skip: process.platform !== "win32",
-  timeout: 30_000,
+  skip: process.platform !== "win32" || process.env.CSO_RUN_REAL_WINDOWS_HEALTH_PROBE !== "1",
+  timeout: 45_000,
 }, async (t) => {
   const healthParent = path.join(os.tmpdir(), "SkillOrganizerForCodex-health");
   const healthRoot = path.join(healthParent, randomUUID().replaceAll("-", ""));
@@ -106,6 +106,8 @@ test("internal health server creates its database and descriptor without touchin
       HOME: fakeHome,
       USERPROFILE: fakeHome,
       CODEX_HOME: path.join(fakeHome, ".codex"),
+      TEMP: os.tmpdir(),
+      TMP: os.tmpdir(),
       CSO_DESKTOP_PID: String(process.pid),
       [INTERNAL_HEALTH_DATA_ROOT_ENV]: healthRoot,
       [INTERNAL_HEALTH_PARENT_PID_ENV]: String(process.pid),

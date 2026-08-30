@@ -11,6 +11,7 @@ import { OrganizerDatabase, type LogicalSkill } from "../src/v2/index.js";
 import { writeSkill } from "./helpers.js";
 
 const NOW = "2026-08-30T00:00:00.000Z";
+const localPathLocationProbe = async (): Promise<"local"> => "local";
 
 function logicalSkill(id: string): LogicalSkill {
   return {
@@ -141,6 +142,7 @@ test("runtime writes audit succeeded, failed, and not-executed exact instances; 
       statePath: path.join(directory, "organizer.db"),
       appServer,
       now: () => new Date(NOW),
+      pathLocationProbe: localPathLocationProbe,
     });
     const initial = await service.initialize();
     const instanceIds = paths.map((skillPath) => initial.skills.find((skill) => skill.absolutePath === skillPath)!.instances![0]!.instanceId);
@@ -188,6 +190,7 @@ test("runtime undo requires management and sensitive confirmation, targets exact
       statePath: path.join(directory, "organizer.db"),
       appServer,
       now: () => new Date(NOW),
+      pathLocationProbe: localPathLocationProbe,
     });
     const initial = await service.initialize();
     const instanceIds = paths.map((skillPath) => initial.skills.find((skill) => skill.absolutePath === skillPath)!.instances![0]!.instanceId);
