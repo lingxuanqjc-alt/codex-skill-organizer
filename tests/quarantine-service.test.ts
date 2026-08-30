@@ -15,6 +15,7 @@ import type { ObservedSkill, RootDefinition } from "../src/shared/types.js";
 import { OrganizerDatabase, type InstallationUnit } from "../src/v2/index.js";
 
 const NOW = "2026-08-30T00:00:00.000Z";
+const localPathLocationProbe = async (): Promise<"local"> => "local";
 
 interface Harness {
   temporary: string;
@@ -112,6 +113,7 @@ test("prepare is read-only, shows impact, and execution requires management mode
       dataDirectory: harness.dataPath,
       roots: [harness.root],
       now: () => new Date(NOW),
+      pathLocationProbe: localPathLocationProbe,
       fileAdapter: {
         hashFile: async () => { throw new Error("prepare must not hash file bodies"); },
       },
@@ -169,6 +171,7 @@ test("quarantine accepts a DOS 8.3 source alias only when it retains the same ph
       dataDirectory: harness.dataPath,
       roots: [aliasHarness.root],
       now: () => new Date(NOW),
+      pathLocationProbe: localPathLocationProbe,
       fileAdapter: {
         lstat: (candidate) => base.lstat(toShort(candidate)),
         realpath: async (candidate) => toLong(await base.realpath(toShort(candidate))),
@@ -226,6 +229,7 @@ test("candidate discovery groups nested physical skills into one unconfirmed bun
       dataDirectory: harness.dataPath,
       roots: [harness.root],
       now: () => new Date(NOW),
+      pathLocationProbe: localPathLocationProbe,
     });
     const candidates = await service.discoverCandidates(observed);
     assert.equal(candidates.length, 1);
@@ -250,6 +254,7 @@ test("prepare rejects overlapping installation-unit boundaries before moving eit
       dataDirectory: harness.dataPath,
       roots: [harness.root],
       now: () => new Date(NOW),
+      pathLocationProbe: localPathLocationProbe,
     });
     const plan = await service.prepare(
       [parent.unit.installationUnitId, child.unit.installationUnitId],
@@ -274,6 +279,7 @@ test("safe unit can be quarantined and restored without overwriting any path", a
       dataDirectory: harness.dataPath,
       roots: [harness.root],
       now: () => new Date(NOW),
+      pathLocationProbe: localPathLocationProbe,
     });
     await harness.database.setManagementMode(true);
     const plan = await service.prepare([unit.installationUnitId], inventory([unit], [skill]));
@@ -302,6 +308,7 @@ test("restore conflict stops without overwrite and purge removes only the quaran
       dataDirectory: harness.dataPath,
       roots: [harness.root],
       now: () => new Date(NOW),
+      pathLocationProbe: localPathLocationProbe,
     });
     await harness.database.setManagementMode(true);
     const plan = await service.prepare([unit.installationUnitId], inventory([unit], [skill]));
@@ -333,6 +340,7 @@ test("an explicit same-parent restore choice preserves the conflict and records 
       dataDirectory: harness.dataPath,
       roots: [harness.root],
       now: () => new Date(NOW),
+      pathLocationProbe: localPathLocationProbe,
     });
     await harness.database.setManagementMode(true);
     const plan = await service.prepare([unit.installationUnitId], inventory([unit], [skill]));
@@ -385,6 +393,7 @@ test("prepare fail-closes unconfirmed, unauthorized, protected, outside-root, Gi
       dataDirectory: harness.dataPath,
       roots: [harness.root],
       now: () => new Date(NOW),
+      pathLocationProbe: localPathLocationProbe,
       sizeLimitBytes: 10,
     });
     const plan = await service.prepare(units.map((unit) => unit.installationUnitId), inventory(units, skills));
@@ -451,6 +460,7 @@ test("an EXDEV move uses copy plus per-file SHA-256 verification before deleting
       dataDirectory: harness.dataPath,
       roots: [harness.root],
       now: () => new Date(NOW),
+      pathLocationProbe: localPathLocationProbe,
       fileAdapter: adapter,
     });
     await harness.database.setManagementMode(true);
@@ -494,6 +504,7 @@ test("an EXDEV cleanup failure restores the frozen source and leaves no untracke
       dataDirectory: harness.dataPath,
       roots: [harness.root],
       now: () => new Date(NOW),
+      pathLocationProbe: localPathLocationProbe,
       fileAdapter: adapter,
     });
     await harness.database.setManagementMode(true);
@@ -544,6 +555,7 @@ test("an EXDEV destination mutation never overwrites the frozen original during 
       dataDirectory: harness.dataPath,
       roots: [harness.root],
       now: () => new Date(NOW),
+      pathLocationProbe: localPathLocationProbe,
       fileAdapter: adapter,
     });
     await harness.database.setManagementMode(true);
@@ -588,6 +600,7 @@ test("an EXDEV rollback preserves both divergent recovery copies when neither ma
       dataDirectory: harness.dataPath,
       roots: [harness.root],
       now: () => new Date(NOW),
+      pathLocationProbe: localPathLocationProbe,
       fileAdapter: adapter,
     });
     await harness.database.setManagementMode(true);
@@ -615,6 +628,7 @@ test("batch execution stops on first filesystem failure and audits remaining uni
       dataDirectory: harness.dataPath,
       roots: [harness.root],
       now: () => new Date(NOW),
+      pathLocationProbe: localPathLocationProbe,
       fileAdapter: {
         rename: async (sourcePath, destinationPath) => {
           if (sourcePath === units[1]!.unit.absolutePath) throw Object.assign(new Error("simulated move failure"), { code: "EACCES" });
@@ -653,6 +667,7 @@ test("execution revalidates the authorized root identity immediately before the 
       dataDirectory: harness.dataPath,
       roots: [harness.root],
       now: () => new Date(NOW),
+      pathLocationProbe: localPathLocationProbe,
       fileAdapter: {
         mkdir: async (directoryPath, options) => {
           await base.mkdir(directoryPath, options);
@@ -694,6 +709,7 @@ test("restore rejects a parent junction substitution and never writes into its t
       dataDirectory: harness.dataPath,
       roots: [harness.root],
       now: () => new Date(NOW),
+      pathLocationProbe: localPathLocationProbe,
     });
     await harness.database.setManagementMode(true);
     const plan = await service.prepare([unit.installationUnitId], inventory([unit], [skill]));
@@ -726,6 +742,7 @@ test("restore verifies the recorded content fingerprint even when size and mtime
       dataDirectory: harness.dataPath,
       roots: [harness.root],
       now: () => new Date(NOW),
+      pathLocationProbe: localPathLocationProbe,
     });
     await harness.database.setManagementMode(true);
     const plan = await service.prepare([unit.installationUnitId], inventory([unit], [skill]));

@@ -72,7 +72,21 @@ test("internal health root requires the direct desktop parent and generated loca
       ...base,
       environment: { ...base.environment, [INTERNAL_HEALTH_DATA_ROOT_ENV]: "C:\\Users\\fixture\\organizer" },
     }),
-    /temporary boundary/u,
+    /temporary boundary: parent mismatch/u,
+  );
+  assert.throws(
+    () => resolveServerDataDirectory({
+      ...base,
+      environment: { ...base.environment, [INTERNAL_HEALTH_DATA_ROOT_ENV]: "\\\\server\\share\\organizer" },
+    }),
+    /temporary boundary: UNC path/u,
+  );
+  assert.throws(
+    () => resolveServerDataDirectory({
+      ...base,
+      environment: { ...base.environment, [INTERNAL_HEALTH_DATA_ROOT_ENV]: "C:\\Temp\\SkillOrganizerForCodex-health\\not-a-guid" },
+    }),
+    /temporary boundary: invalid generated identifier/u,
   );
 });
 

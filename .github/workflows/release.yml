@@ -94,6 +94,11 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Workbench browser contract failed.' }
           ./scripts/release/Test-ReleaseScaffold.ps1
 
+      - name: Verify real Windows drive probe in isolation
+        env:
+          CSO_RUN_REAL_WINDOWS_PATH_PROBE: '1'
+        run: npm run test:path-probe:windows
+
       - name: Audit production dependency severities again for the tag
         run: npm audit --omit=dev --audit-level=high
 
@@ -216,8 +221,12 @@ jobs:
 
             if ($healthProcess.HasExited -or -not (Test-Path -LiteralPath $descriptorPath -PathType Leaf)) {
               $stderrText = if ($healthProcess.HasExited) { $healthProcess.StandardError.ReadToEnd() } else { '' }
-              $category = if ($stderrText.Contains('data root is outside the generated local temporary boundary')) {
-                'data-root-boundary-rejected'
+              $category = if ($stderrText.Contains('temporary boundary: UNC path')) {
+                'data-root-unc-rejected'
+              } elseif ($stderrText.Contains('temporary boundary: parent mismatch')) {
+                'data-root-parent-rejected'
+              } elseif ($stderrText.Contains('temporary boundary: invalid generated identifier')) {
+                'data-root-id-rejected'
               } elseif ($stderrText.Contains('parent process does not match the direct desktop parent')) {
                 'parent-process-rejected'
               } elseif ($stderrText.Contains('startup arguments are invalid')) {

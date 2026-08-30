@@ -35,6 +35,9 @@ if ($package.scripts.'check:version' -ne 'node scripts/version-contract.mjs --ch
     -not ([string]$package.scripts.check).StartsWith('npm run check:version && npm run check:security && ')) {
     throw 'package.json does not make the version and repository security contracts part of ordinary checks.'
 }
+if ($package.scripts.'test:path-probe:windows' -ne 'tsx --test --test-concurrency=1 tests/windows-path-probe.test.ts') {
+    throw 'package.json must keep the real Windows path probe isolated and serial.'
+}
 & node (Join-Path $repoRoot 'scripts\version-contract.mjs') --check
 if ($LASTEXITCODE -ne 0) { throw 'Repository product version derivatives are stale.' }
 if (-not (Test-Path -LiteralPath $securityGatePath -PathType Leaf)) {
@@ -102,6 +105,21 @@ if ($installerMatrixExitStatements.Count -ne 0) {
     throw 'Installer matrix must return to its caller; an exit statement would terminate the shared release PowerShell host.'
 }
 $releaseWorkflowText = Get-Content -LiteralPath (Join-Path $repoRoot '.github\workflows\release.yml') -Raw
+$ciWorkflowText = Get-Content -LiteralPath (Join-Path $repoRoot '.github\workflows\ci.yml') -Raw
+foreach ($workflowEntry in @(
+    [pscustomobject]@{ Name = 'CI'; Text = $ciWorkflowText },
+    [pscustomobject]@{ Name = 'Release'; Text = $releaseWorkflowText }
+)) {
+    foreach ($pathProbeInvariant in @(
+        'Verify real Windows drive probe in isolation',
+        "CSO_RUN_REAL_WINDOWS_PATH_PROBE: '1'",
+        'run: npm run test:path-probe:windows'
+    )) {
+        if (-not $workflowEntry.Text.Contains($pathProbeInvariant)) {
+            throw "$($workflowEntry.Name) workflow omits the isolated real Windows path probe: $pathProbeInvariant"
+        }
+    }
+}
 $tagPublishCondition = 'if: ${{ github.event_name == ''push'' && startsWith(github.ref, ''refs/tags/v'') }}'
 if ([regex]::Matches($releaseWorkflowText, [regex]::Escape($tagPublishCondition)).Count -ne 3) {
     throw 'Manual release workflow runs must never stage notes or enter the publish job, including when dispatched from a tag.'
@@ -175,7 +193,9 @@ $bundledHealthTransportInvariants = @(
     '$startInfo.RedirectStandardError = $true',
     '$startInfo.ArgumentList.Add($serverPath)',
     '$startInfo.ArgumentList.Add(''--internal-health-check'')',
-    "'data-root-boundary-rejected'",
+    "'data-root-unc-rejected'",
+    "'data-root-parent-rejected'",
+    "'data-root-id-rejected'",
     'BUNDLED-HEALTH-DIAGNOSTIC: category=',
     'if ([int]$descriptor.pid -ne $healthProcess.Id',
     '$descriptor.host -ne ''127.0.0.1''',

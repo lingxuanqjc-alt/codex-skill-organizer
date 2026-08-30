@@ -105,6 +105,11 @@ jobs:
       - name: Verify application
         run: npm run check
 
+      - name: Verify real Windows drive probe in isolation
+        env:
+          CSO_RUN_REAL_WINDOWS_PATH_PROBE: '1'
+        run: npm run test:path-probe:windows
+
       - name: Install Chromium for release scaffold icon generation
         run: npx playwright install chromium
 

@@ -11,6 +11,8 @@ import { ServiceLifecycle } from "../src/server/service-lifecycle.js";
 import { isFetchBlockedPort } from "../src/server/safe-listen.js";
 import { writeSkill } from "./helpers.js";
 
+const localPathLocationProbe = async (): Promise<"local"> => "local";
+
 async function createPublicDirectory(root: string): Promise<string> {
   const directory = path.join(root, "public");
   await mkdir(directory, { recursive: true });
@@ -65,6 +67,7 @@ test("HTTP boundary enforces loopback sessions, Origin, CSRF, and stale revision
     roots: [{ id: "fixture", label: "Fixture", path: skillRoot, kind: "codex" }],
     statePath,
     appServer: null,
+    pathLocationProbe: localPathLocationProbe,
   });
   await inventory.initialize();
   const running = await startOrganizerHttpServer({
@@ -142,6 +145,7 @@ test("an MCP bearer cannot self-confirm sensitive runtime writes, while ordinary
     roots: [{ id: "fixture", label: "Fixture", path: skillRoot, kind: "codex" }],
     statePath: path.join(temporary, "organizer.db"),
     appServer,
+    pathLocationProbe: localPathLocationProbe,
   });
   await inventory.initialize();
   await inventory.setManagementMode(true);
@@ -206,6 +210,7 @@ test("management mode cannot be enabled by an MCP bearer session", async () => {
     roots: [{ id: "fixture", label: "Fixture", path: skillRoot, kind: "codex" }],
     statePath: path.join(temporary, "organizer.db"),
     appServer: null,
+    pathLocationProbe: localPathLocationProbe,
   });
   await inventory.initialize();
   const running = await startOrganizerHttpServer({
@@ -258,7 +263,12 @@ test("management mode cannot be enabled by an MCP bearer session", async () => {
 
 test("HTTP server refuses non-loopback bindings", async () => {
   const temporary = await mkdtemp(path.join(os.tmpdir(), "cso-host-"));
-  const inventory = new InventoryService({ roots: [], statePath: path.join(temporary, "organizer.db"), appServer: null });
+  const inventory = new InventoryService({
+    roots: [],
+    statePath: path.join(temporary, "organizer.db"),
+    appServer: null,
+    pathLocationProbe: localPathLocationProbe,
+  });
   await inventory.initialize();
   await assert.rejects(
     startOrganizerHttpServer({ inventory, publicDirectory: await createPublicDirectory(temporary), host: "0.0.0.0" }),
@@ -276,7 +286,12 @@ test("authenticated desktop leases are generation-safe and MCP requests refresh 
     desktopLeaseTtlMs: 90_000,
     now: () => now,
   });
-  const inventory = new InventoryService({ roots: [], statePath: path.join(temporary, "organizer.db"), appServer: null });
+  const inventory = new InventoryService({
+    roots: [],
+    statePath: path.join(temporary, "organizer.db"),
+    appServer: null,
+    pathLocationProbe: localPathLocationProbe,
+  });
   await inventory.initialize();
   const running = await startOrganizerHttpServer({
     inventory,
@@ -318,7 +333,12 @@ test("expired shared credentials make health fail closed so MCP can launch a fre
   const temporary = await mkdtemp(path.join(os.tmpdir(), "cso-expired-health-"));
   let now = 5_000_000;
   const sessions = new SessionManager(1_000, () => now);
-  const inventory = new InventoryService({ roots: [], statePath: path.join(temporary, "organizer.db"), appServer: null });
+  const inventory = new InventoryService({
+    roots: [],
+    statePath: path.join(temporary, "organizer.db"),
+    appServer: null,
+    pathLocationProbe: localPathLocationProbe,
+  });
   await inventory.initialize();
   const running = await startOrganizerHttpServer({
     inventory,
@@ -350,6 +370,7 @@ test("default diagnostics replace raw scan messages and absolute user paths with
     roots: [{ id: "missing", label: "Missing fixture", path: missingRoot, kind: "fixture" }],
     statePath: path.join(temporary, "organizer.db"),
     appServer: null,
+    pathLocationProbe: localPathLocationProbe,
   });
   await inventory.initialize();
   const running = await startOrganizerHttpServer({
@@ -395,6 +416,7 @@ test("a full support bundle requires desktop cookie, CSRF, and a second explicit
     roots: [{ id: "fixture", label: "Private fixture", path: skillRoot, kind: "fixture" }],
     statePath: path.join(temporary, "data", "organizer.db"),
     appServer: null,
+    pathLocationProbe: localPathLocationProbe,
   });
   await inventory.initialize();
   const protectedPaths: string[] = [];
@@ -485,6 +507,7 @@ test("installation boundaries and actual quarantine execution remain desktop-coo
     roots: [{ id: "fixture", label: "Fixture", path: skillRoot, kind: "codex" }],
     statePath: path.join(temporary, "data", "organizer.db"),
     appServer: null,
+    pathLocationProbe: localPathLocationProbe,
   });
   await inventory.initialize();
   const running = await startOrganizerHttpServer({
@@ -584,6 +607,7 @@ test("safe undo can be listed and executed only by a desktop cookie session, nev
     roots: [{ id: "fixture", label: "Fixture", path: skillRoot, kind: "fixture" }],
     statePath: path.join(temporary, "organizer.db"),
     appServer: null,
+    pathLocationProbe: localPathLocationProbe,
   });
   await inventory.initialize();
   const running = await startOrganizerHttpServer({

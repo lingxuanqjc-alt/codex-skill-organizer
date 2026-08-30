@@ -39,10 +39,14 @@ export function resolveServerDataDirectory(options: ServerDataDirectoryOptions):
 
   const healthParent = path.resolve(options.temporaryDirectory, "SkillOrganizerForCodex-health");
   const candidate = path.resolve(requestedRoot);
-  if (candidate.startsWith("\\\\")
-      || !windowsEqual(path.dirname(candidate), healthParent)
-      || !/^[0-9a-f]{32}$/iu.test(path.basename(candidate))) {
-    throw new Error("Internal health-check data root is outside the generated local temporary boundary");
+  if (candidate.startsWith("\\\\")) {
+    throw new Error("Internal health-check data root is outside the generated local temporary boundary: UNC path");
+  }
+  if (!windowsEqual(path.dirname(candidate), healthParent)) {
+    throw new Error("Internal health-check data root is outside the generated local temporary boundary: parent mismatch");
+  }
+  if (!/^[0-9a-f]{32}$/iu.test(path.basename(candidate))) {
+    throw new Error("Internal health-check data root is outside the generated local temporary boundary: invalid generated identifier");
   }
   return candidate;
 }
