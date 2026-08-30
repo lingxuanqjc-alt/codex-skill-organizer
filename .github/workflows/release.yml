@@ -324,8 +324,31 @@ jobs:
           }
           $productRoot = Join-Path $env:LOCALAPPDATA 'Programs\SkillOrganizerForCodex'
           $versionRoot = Join-Path $productRoot "versions\$version"
-          & (Join-Path $productRoot 'SkillOrganizerForCodex.exe') --health-check
-          if ($LASTEXITCODE -ne 0) { throw 'Installed health check failed.' }
+          $stableLauncher = Join-Path $productRoot 'SkillOrganizerForCodex.exe'
+          $versionLauncher = Join-Path $versionRoot 'SkillOrganizerForCodex.exe'
+          $currentPointerPath = Join-Path $productRoot 'current.json'
+          if (-not (Test-Path -LiteralPath $stableLauncher -PathType Leaf) -or
+              -not (Test-Path -LiteralPath $versionLauncher -PathType Leaf) -or
+              -not (Test-Path -LiteralPath $currentPointerPath -PathType Leaf)) {
+            throw 'Installed launcher activation is incomplete.'
+          }
+          $currentPointer = Get-Content -LiteralPath $currentPointerPath -Raw | ConvertFrom-Json
+          $pointerValid = $currentPointer.schemaVersion -eq 1 -and
+            $currentPointer.version -eq $version -and
+            $currentPointer.relativePath -eq "versions/$version"
+          $launcherHashesEqual = (Get-FileHash -LiteralPath $stableLauncher -Algorithm SHA256).Hash -eq
+            (Get-FileHash -LiteralPath $versionLauncher -Algorithm SHA256).Hash
+          Write-Host "INSTALLED-LAUNCHER-DIAGNOSTIC: pointerValid=$pointerValid hashesEqual=$launcherHashesEqual"
+          if (-not $pointerValid -or -not $launcherHashesEqual) {
+            throw 'Installed launcher activation does not match the selected version.'
+          }
+
+          $directHealthProcess = Start-Process -FilePath $versionLauncher -ArgumentList '--health-check' -Wait -PassThru -WindowStyle Hidden
+          $stableHealthProcess = Start-Process -FilePath $stableLauncher -ArgumentList '--health-check' -Wait -PassThru -WindowStyle Hidden
+          Write-Host "INSTALLED-HEALTH-DIAGNOSTIC: directExitCode=$($directHealthProcess.ExitCode) stableExitCode=$($stableHealthProcess.ExitCode)"
+          if ($directHealthProcess.ExitCode -ne 0 -or $stableHealthProcess.ExitCode -ne 0) {
+            throw 'Installed direct or stable-launcher health check failed.'
+          }
           ./scripts/release/New-ContentManifest.ps1 -Root $versionRoot -OutputPath "$env:RUNNER_TEMP/installed-manifest.json" | Out-Null
           ./scripts/release/Compare-ContentManifest.ps1 `
             -ReferenceManifest (Join-Path $releaseRoot "CONTENT-MANIFEST-version-$version.json") `

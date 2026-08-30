@@ -168,6 +168,9 @@ foreach ($rollbackSmokeInvariant in @(
     '$initialInstallLog = Join-Path $env:RUNNER_TEMP ''cso-initial-install.log''',
     '$initialInstallArgs = "$installArgs /LOG=`"$initialInstallLog`""',
     'SETUP-DIAGNOSTIC:',
+    'INSTALLED-LAUNCHER-DIAGNOSTIC: pointerValid=$pointerValid hashesEqual=$launcherHashesEqual',
+    'INSTALLED-HEALTH-DIAGNOSTIC: directExitCode=$($directHealthProcess.ExitCode) stableExitCode=$($stableHealthProcess.ExitCode)',
+    'if ($directHealthProcess.ExitCode -ne 0 -or $stableHealthProcess.ExitCode -ne 0)',
     '$fixtureHealthProcess = Start-Process',
     'if ($fixtureHealthProcess.ExitCode -ne 71)',
     '$faultHealthProcess = Start-Process',
@@ -224,8 +227,8 @@ if ($releaseWorkflowText -match '(?im)Write-(?:Host|Output)[^\r\n]*\$stderrText'
     throw 'Release workflow must not print raw bundled-service stderr into the public Actions log.'
 }
 $expectedHealthProbeArguments = "-ArgumentList '--health-check' -Wait -PassThru -WindowStyle Hidden"
-if ([regex]::Matches($releaseWorkflowText, [regex]::Escape($expectedHealthProbeArguments)).Count -ne 2) {
-    throw 'Expected-failure health probes must wait for the hidden child process and inspect its exit code explicitly.'
+if ([regex]::Matches($releaseWorkflowText, [regex]::Escape($expectedHealthProbeArguments)).Count -ne 4) {
+    throw 'Release health probes must wait for the hidden child process and inspect their exit codes explicitly.'
 }
 foreach ($matrixInvariant in @(
     "if (`$env:GITHUB_ACTIONS -ne 'true')",
