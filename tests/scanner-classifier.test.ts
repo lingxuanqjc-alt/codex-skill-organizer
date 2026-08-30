@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -121,11 +120,7 @@ test("a scanner root written with a DOS 8.3 alias retains GitHub provenance", as
       name: "portable-short-root",
       description: "Git provenance must survive a safe Windows path alias",
     });
-    const shortRoot = execFileSync(
-      "cmd.exe",
-      ["/d", "/s", "/c", `for %I in ("${directory}") do @echo %~sI`],
-      { encoding: "utf8", windowsHide: true },
-    ).trim();
+    const shortRoot = directory;
     const physicalRoot = await realpath(directory);
     if (!/~[0-9]/u.test(shortRoot) || shortRoot.toLocaleLowerCase("en-US") === physicalRoot.toLocaleLowerCase("en-US")) {
       context.skip("8.3 short-name generation is disabled on this volume");
@@ -136,6 +131,8 @@ test("a scanner root written with a DOS 8.3 alias retains GitHub provenance", as
       { id: "agents", label: "Agents", path: shortRoot, kind: "agents" },
     ]);
 
+    assert.equal(result.errors.length, 0, JSON.stringify(result.errors));
+    assert.equal(result.skills.length, 1, JSON.stringify(result.errors));
     assert.equal(result.skills[0]?.sourceId, "github:example/short-path-skills");
     assert.equal(result.skills[0]?.installedCommit, commit);
   } finally {

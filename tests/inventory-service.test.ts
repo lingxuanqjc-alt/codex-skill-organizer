@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import type { FSWatcher } from "node:fs";
-import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -169,13 +169,14 @@ class CountingRuntimeAppServer extends AppServerClient {
 
 test("clearing a selected project removes it from subsequent app-server runtime requests", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "cso-project-runtime-clear-"));
+  let service: InventoryService | undefined;
   try {
     const baseCwd = path.join(directory, "base");
     const selected = path.join(directory, "selected");
     await mkdir(baseCwd, { recursive: true });
     await mkdir(selected, { recursive: true });
     const appServer = new CountingRuntimeAppServer();
-    const service = new InventoryService({
+    service = new InventoryService({
       roots: [],
       cwd: baseCwd,
       statePath: path.join(directory, "organizer.db"),
@@ -185,11 +186,11 @@ test("clearing a selected project removes it from subsequent app-server runtime 
     });
     let snapshot = await service.initialize();
     snapshot = await service.selectProject(selected, snapshot.revision);
-    assert.ok(appServer.listCwds.at(-1)?.includes(selected));
+    assert.ok(appServer.listCwds.at(-1)?.includes(await realpath(selected)));
     snapshot = await service.selectProject(null, snapshot.revision);
     assert.deepEqual(appServer.listCwds.at(-1), [baseCwd]);
-    await service.close();
   } finally {
+    await service?.close();
     await rm(directory, { recursive: true, force: true });
   }
 });
@@ -843,8 +844,10 @@ test("portable workspace settings persist in SQLite while custom roots stay read
     name: "repo-helper",
     description: "Project scoped helper",
   });
+  let first: InventoryService | undefined;
+  let reopened: InventoryService | undefined;
   try {
-    const first = new InventoryService({ roots: [], statePath, appServer: null });
+    first = new InventoryService({ roots: [], statePath, appServer: null });
     let snapshot = await first.initialize();
     snapshot = await first.addCustomRoot(customRoot, "同步盘 Skills", snapshot.revision);
     const configured = snapshot.configuredRoots?.[0];
@@ -854,7 +857,8 @@ test("portable workspace settings persist in SQLite while custom roots stay read
     snapshot = await first.setCustomRootManagement(configured!.rootId, true, snapshot.revision);
     assert.equal(snapshot.configuredRoots?.[0]?.managementAuthorized, true);
     snapshot = await first.selectProject(projectRoot, snapshot.revision);
-    assert.equal(snapshot.selectedProjectPath, projectRoot);
+    const physicalProjectRoot = await realpath(projectRoot);
+    assert.equal(snapshot.selectedProjectPath, physicalProjectRoot);
     assert.ok(snapshot.skills.some((skill) => skill.scope === "repo" && skill.name === "repo-helper"));
 
     snapshot = await first.createCustomCategory({
@@ -878,15 +882,19 @@ test("portable workspace settings persist in SQLite while custom roots stay read
     assert.equal(snapshot.categoryPreferences?.[0]?.display.zhCN, "我的工程");
     assert.equal(snapshot.savedViews?.[0]?.viewId, "favorites");
     await first.close();
+    first = undefined;
 
-    const reopened = new InventoryService({ roots: [], statePath, appServer: null });
+    reopened = new InventoryService({ roots: [], statePath, appServer: null });
     const persisted = await reopened.initialize();
     assert.equal(persisted.configuredRoots?.[0]?.managementAuthorized, true);
-    assert.equal(persisted.selectedProjectPath, projectRoot);
+    assert.equal(persisted.selectedProjectPath, physicalProjectRoot);
     assert.equal(persisted.customCategories?.[0]?.categoryId, "custom:personal-tools");
     assert.equal(persisted.savedViews?.[0]?.viewId, "favorites");
     await reopened.close();
+    reopened = undefined;
   } finally {
+    await reopened?.close();
+    await first?.close();
     await rm(directory, { recursive: true, force: true });
   }
 });

@@ -3,17 +3,20 @@ import path from "node:path";
 
 export type PathLocation = "local" | "network" | "unknown";
 export type PathLocationProbe = (candidate: string) => Promise<PathLocation>;
+type WindowsDriveTypeResolver = (driveRoot: string, timeoutMs: number) => Promise<string>;
+
+const WINDOWS_DRIVE_TYPE_PROBE_TIMEOUT_MS = 15_000;
 
 export interface PathLocationProbeOptions {
   platform?: NodeJS.Platform;
-  resolveWindowsDriveType?: (driveRoot: string) => Promise<string>;
+  resolveWindowsDriveType?: WindowsDriveTypeResolver;
 }
 
 function isUncPath(candidate: string): boolean {
   return candidate.replaceAll("/", "\\").startsWith("\\\\");
 }
 
-async function resolveWindowsDriveType(driveRoot: string): Promise<string> {
+async function resolveWindowsDriveType(driveRoot: string, timeoutMs: number): Promise<string> {
   const systemRoot = process.env.SystemRoot ?? process.env.WINDIR ?? "C:\\Windows";
   const powershell = path.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
   const script = [
@@ -29,7 +32,7 @@ async function resolveWindowsDriveType(driveRoot: string): Promise<string> {
       {
         encoding: "utf8",
         env: { ...process.env, CSO_PATH_PROBE_ROOT: driveRoot },
-        timeout: 5_000,
+        timeout: timeoutMs,
         windowsHide: true,
         maxBuffer: 16 * 1024,
       },
@@ -53,7 +56,12 @@ export async function probePathLocation(
   const driveRoot = path.win32.parse(candidate).root;
   if (!/^[A-Za-z]:\\$/u.test(driveRoot)) return "unknown";
   try {
-    const driveType = await (options.resolveWindowsDriveType ?? resolveWindowsDriveType)(driveRoot);
+    // A cold Windows PowerShell process on hosted or enterprise-controlled
+    // machines can take more than five seconds before DriveInfo executes.
+    const driveType = await (options.resolveWindowsDriveType ?? resolveWindowsDriveType)(
+      driveRoot,
+      WINDOWS_DRIVE_TYPE_PROBE_TIMEOUT_MS,
+    );
     if (driveType === "Network") return "network";
     if (["Fixed", "Removable", "Ram"].includes(driveType)) return "local";
     return "unknown";

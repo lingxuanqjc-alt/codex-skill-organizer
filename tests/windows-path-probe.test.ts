@@ -23,3 +23,17 @@ test("Windows mapped network drives and probe failures fail closed", async () =>
     resolveWindowsDriveType: async () => "Fixed",
   }), "local");
 });
+
+test("Windows drive probe reserves 15 seconds for cold PowerShell startup", async () => {
+  let observedTimeoutMs: number | undefined;
+  const location = await probePathLocation("C:\\skills", {
+    platform: "win32",
+    resolveWindowsDriveType: async (_root, timeoutMs) => {
+      observedTimeoutMs = timeoutMs;
+      return "Fixed";
+    },
+  });
+
+  assert.equal(location, "local");
+  assert.equal(observedTimeoutMs, 15_000);
+});

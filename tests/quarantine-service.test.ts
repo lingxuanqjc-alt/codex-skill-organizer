@@ -117,7 +117,7 @@ test("prepare is read-only, shows impact, and execution requires management mode
       },
     });
     const plan = await service.prepare([unit.installationUnitId], inventory([unit], [skill]));
-    assert.equal(plan.executable, true);
+    assert.equal(plan.executable, true, JSON.stringify(plan.items));
     assert.equal(await exists(unit.absolutePath), true, "prepare never moves the source");
     assert.deepEqual(plan.items[0]?.affectedSkillIds, [skill.logicalSkillId]);
     assert.ok(plan.items[0]?.tree.some((entry) => entry.relativePath === ".env"));

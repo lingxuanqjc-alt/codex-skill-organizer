@@ -235,7 +235,7 @@ test("management mode cannot be enabled by an MCP bearer session", async () => {
       },
       body: JSON.stringify({ sessionId: "mcp-session-http-fixture", projectPaths: [sessionProject] }),
     });
-    assert.equal(projectContext.status, 200);
+    assert.equal(projectContext.status, 200, await projectContext.clone().text());
     assert.ok(inventory.snapshot.skills.some((skill) => skill.name === "repo-context" && skill.scope === "repo"));
 
     const clearProjectContext = await fetch(`${running.baseUrl}/api/session-project`, {
@@ -527,7 +527,7 @@ test("installation boundaries and actual quarantine execution remain desktop-coo
         expectedRevision: inventory.snapshot.revision,
       }),
     });
-    assert.equal(confirmed.status, 200);
+    assert.equal(confirmed.status, 200, await confirmed.clone().text());
     const confirmedPayload = await confirmed.json() as { snapshot: { revision: string } };
 
     const prepared = await fetch(`${running.baseUrl}/api/quarantine/prepare`, {
