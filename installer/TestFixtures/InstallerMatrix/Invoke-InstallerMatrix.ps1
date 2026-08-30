@@ -105,7 +105,9 @@ function Get-FileSetSnapshot([string[]]$Paths) {
 
 function Get-UninstallRegistrySnapshot() {
     & "$env:SystemRoot\System32\reg.exe" query $uninstallRegistryKey 2>$null | Out-Null
-    if ($LASTEXITCODE -ne 0) { return '<missing>' }
+    $uninstallRegistrationExists = $LASTEXITCODE -eq 0
+    $global:LASTEXITCODE = 0
+    if (-not $uninstallRegistrationExists) { return '<missing>' }
     $exportPath = Join-Path $env:RUNNER_TEMP ('cso-uninstall-' + [Guid]::NewGuid().ToString('N') + '.reg')
     try {
         & "$env:SystemRoot\System32\reg.exe" export $uninstallRegistryKey $exportPath /y | Out-Null
@@ -170,6 +172,9 @@ function Invoke-Uninstall([switch]$PurgeData) {
     if ($PurgeData) { $arguments += ' /PURGEDATA' }
     $process = Start-Process -FilePath $uninstaller -ArgumentList $arguments -Wait -PassThru
     if ($process.ExitCode -ne 0) { throw "Fixture uninstall failed: $($process.ExitCode)" }
+    if ($PurgeData -and (Test-Path -LiteralPath $dataRoot)) {
+        throw 'Fixture purge did not remove the Organizer data root.'
+    }
 }
 
 function Compile-ActivationFaultInstaller([string]$FixtureVersion, [string]$Label) {

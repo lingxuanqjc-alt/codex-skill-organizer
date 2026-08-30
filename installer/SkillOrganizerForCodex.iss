@@ -133,7 +133,6 @@ Filename: "{app}\{#ProductExe}"; Description: "启动 {#ProductName} / Launch {#
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}"
-Type: filesandordirs; Name: "{localappdata}\SkillOrganizerForCodex"; Check: ShouldPurgeUserData
 
 [Code]
 const
@@ -1420,9 +1419,21 @@ begin
     Result := ShowUninstallOptions();
 end;
 
-function ShouldPurgeUserData(): Boolean;
+procedure PurgeOrganizerData();
+var
+  PurgeSucceeded: Boolean;
 begin
-  Result := PurgeUserData;
+  if not PurgeUserData then Exit;
+  EnsureSafeDataTree();
+  PurgeSucceeded := True;
+  if DirExists(DataRoot()) then
+    PurgeSucceeded := DelTree(DataRoot(), True, True, True);
+  if (not PurgeSucceeded) or FileOrDirExists(DataRoot()) then
+  begin
+    RaiseException(
+      '无法彻底删除 Organizer 数据目录；卸载已停止。' + #13#10 +
+      'The Organizer data directory could not be purged; uninstall stopped.');
+  end;
 end;
 
 procedure UnregisterCodexPlugin();
@@ -1472,5 +1483,6 @@ begin
   begin
     StopOrganizerService(VersionLauncherPath());
     UnregisterCodexPlugin();
+    PurgeOrganizerData();
   end;
 end;

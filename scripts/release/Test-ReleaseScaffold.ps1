@@ -488,6 +488,7 @@ foreach ($matrixInvariant in @(
     'Same-version activation rollback did not restore the complete install state byte-for-byte.',
     'Old-to-new activation rollback did not restore the complete install state byte-for-byte.',
     'Clean first-install activation rollback did not restore the absent program, registry, shortcut, plugin, and marketplace state.',
+    'Fixture purge did not remove the Organizer data root.',
     "[pscustomobject]@{ Name = 'type-desktop'; Arguments = '/TYPE=desktop'; Plugin = `$false }",
     "[pscustomobject]@{ Name = 'type-full'; Arguments = '/TYPE=full'; Plugin = `$true }",
     "Arguments = '/TYPE=custom /COMPONENTS=workbench'",
@@ -504,6 +505,48 @@ foreach ($matrixInvariant in @(
     if (-not $installerMatrixText.Contains($matrixInvariant)) {
         throw "Installer matrix fixture is missing: $matrixInvariant"
     }
+}
+$registrySnapshotFunctions = @($installerMatrixAst.FindAll({
+    param($Node)
+    $Node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $Node.Name -ceq 'Get-UninstallRegistrySnapshot'
+}, $true))
+$handledMissingRegistryProbePattern = @'
+(?ms)&\s+"\$env:SystemRoot\\System32\\reg\.exe"\s+query\s+\$uninstallRegistryKey\s+2>\$null\s*\|\s*Out-Null\s*\r?\n\s*\$uninstallRegistrationExists\s*=\s*\$LASTEXITCODE\s+-eq\s+0\s*\r?\n\s*\$global:LASTEXITCODE\s*=\s*0\s*\r?\n\s*if\s*\(\s*-not\s+\$uninstallRegistrationExists\s*\)\s*\{\s*return\s+'<missing>'\s*\}
+'@.Trim()
+if ($registrySnapshotFunctions.Count -ne 1 -or
+    [regex]::Matches($registrySnapshotFunctions[0].Extent.Text, $handledMissingRegistryProbePattern).Count -ne 1 -or
+    [regex]::Matches(
+        $registrySnapshotFunctions[0].Extent.Text,
+        '(?m)^\s*\$global:LASTEXITCODE\s*=\s*0\s*$').Count -ne 1) {
+    throw 'The installer matrix must consume an expected absent-registry exit code before returning a clean transaction result.'
+}
+$uninstallFixtureFunctions = @($installerMatrixAst.FindAll({
+    param($Node)
+    $Node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $Node.Name -ceq 'Invoke-Uninstall'
+}, $true))
+$purgePostconditionPattern = @'
+(?ms)if\s*\(\s*\$PurgeData\s+-and\s*\(\s*Test-Path\s+-LiteralPath\s+\$dataRoot\s*\)\s*\)\s*\{\s*throw\s+'Fixture purge did not remove the Organizer data root\.'\s*\}
+'@.Trim()
+if ($uninstallFixtureFunctions.Count -ne 1 -or
+    [regex]::Matches($uninstallFixtureFunctions[0].Extent.Text, $purgePostconditionPattern).Count -ne 1) {
+    throw 'Every successful fixture purge must prove that the Organizer data root is absent.'
+}
+$uninstallFixtureText = $uninstallFixtureFunctions[0].Extent.Text
+$fixtureUninstallStartIndex = $uninstallFixtureText.IndexOf(
+    '$process = Start-Process -FilePath $uninstaller',
+    [StringComparison]::Ordinal)
+$fixtureExitCheckIndex = $uninstallFixtureText.IndexOf(
+    'if ($process.ExitCode -ne 0)',
+    [StringComparison]::Ordinal)
+$fixturePurgePostconditionIndex = $uninstallFixtureText.IndexOf(
+    'if ($PurgeData -and (Test-Path -LiteralPath $dataRoot))',
+    [StringComparison]::Ordinal)
+if ($fixtureUninstallStartIndex -lt 0 -or
+    $fixtureExitCheckIndex -le $fixtureUninstallStartIndex -or
+    $fixturePurgePostconditionIndex -le $fixtureExitCheckIndex) {
+    throw 'Fixture purge postconditions must run only after the uninstaller starts and reports a successful exit.'
 }
 
 $buildReleaseCommand = Get-Command -Name (Join-Path $scriptRoot 'Build-Release.ps1')
@@ -603,7 +646,10 @@ $installerInvariants = @(
     'ExistingPathIsUnsafeReparse(ProgramsRoot)',
     'not IsFixedLocalPath(ProductRoot())',
     'not IsFixedLocalPath(DataRoot())',
-    'ShouldPurgeUserData',
+    'procedure PurgeOrganizerData();',
+    'PurgeSucceeded := DelTree(DataRoot(), True, True, True);',
+    'if (not PurgeSucceeded) or FileOrDirExists(DataRoot()) then',
+    'procedure UnregisterCodexPlugin();',
     'SetupIconFile={#SetupIconFileSource}',
     'Name: "workbench"',
     'Flags: fixed'
@@ -612,6 +658,64 @@ foreach ($invariant in $installerInvariants) {
     if (-not $installerText.Contains($invariant)) {
         throw "Installer safety contract is missing: $invariant"
     }
+}
+$uninstallDeleteSection = [regex]::Match(
+    $installerText,
+    '(?ms)^\[UninstallDelete\]\s*(?<body>.*?)^\[Code\]\s*$')
+if (-not $uninstallDeleteSection.Success -or
+    $uninstallDeleteSection.Groups['body'].Value.IndexOf(
+        '{localappdata}\SkillOrganizerForCodex',
+        [StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+    $installerText.Contains('ShouldPurgeUserData')) {
+    throw 'Organizer user data must be preserved by the install-time uninstall log and purged only by explicit uninstall code.'
+}
+$purgeProcedureIndex = $installerText.IndexOf('procedure PurgeOrganizerData();', [StringComparison]::Ordinal)
+$unregisterProcedureIndex = $installerText.IndexOf(
+    'procedure UnregisterCodexPlugin();',
+    $purgeProcedureIndex,
+    [StringComparison]::Ordinal)
+$purgeProcedureText = $installerText.Substring(
+    $purgeProcedureIndex,
+    $unregisterProcedureIndex - $purgeProcedureIndex)
+$purgeGuardIndex = $purgeProcedureText.IndexOf('if not PurgeUserData then Exit;', [StringComparison]::Ordinal)
+$purgeSafetyIndex = $purgeProcedureText.IndexOf('EnsureSafeDataTree();', [StringComparison]::Ordinal)
+$purgeDeleteIndex = $purgeProcedureText.IndexOf(
+    'PurgeSucceeded := DelTree(DataRoot(), True, True, True);',
+    [StringComparison]::Ordinal)
+$purgePostconditionIndex = $purgeProcedureText.IndexOf(
+    'if (not PurgeSucceeded) or FileOrDirExists(DataRoot()) then',
+    [StringComparison]::Ordinal)
+$purgeFailureIndex = $purgeProcedureText.IndexOf(
+    'The Organizer data directory could not be purged; uninstall stopped.',
+    [StringComparison]::Ordinal)
+if ($purgeGuardIndex -lt 0 -or
+    $purgeSafetyIndex -le $purgeGuardIndex -or
+    $purgeDeleteIndex -le $purgeSafetyIndex -or
+    $purgePostconditionIndex -le $purgeDeleteIndex -or
+    $purgeFailureIndex -le $purgePostconditionIndex) {
+    throw 'Explicit data purge must require consent, revalidate the boundary, delete, verify absence, and fail closed in that order.'
+}
+$uninstallStepIndex = $installerText.IndexOf(
+    'procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);',
+    [StringComparison]::Ordinal)
+$uninstallStopIndex = $installerText.IndexOf(
+    'StopOrganizerService(VersionLauncherPath());',
+    $uninstallStepIndex,
+    [StringComparison]::Ordinal)
+$uninstallPluginIndex = $installerText.IndexOf(
+    'UnregisterCodexPlugin();',
+    $uninstallStopIndex,
+    [StringComparison]::Ordinal)
+$uninstallPurgeIndex = $installerText.IndexOf(
+    'PurgeOrganizerData();',
+    $uninstallPluginIndex,
+    [StringComparison]::Ordinal)
+if ($uninstallStepIndex -lt 0 -or
+    $uninstallStopIndex -le $uninstallStepIndex -or
+    $uninstallPluginIndex -le $uninstallStopIndex -or
+    $uninstallPurgeIndex -le $uninstallPluginIndex -or
+    [regex]::Matches($installerText, [regex]::Escape('PurgeOrganizerData();')).Count -ne 2) {
+    throw 'Uninstall must stop the service, unregister the plugin, and only then purge explicitly authorized data.'
 }
 foreach ($selectionInvariant in @(
     "HasCommandLinePrefix('/COMPONENTS=')",
