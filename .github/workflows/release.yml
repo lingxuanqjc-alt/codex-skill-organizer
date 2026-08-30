@@ -206,6 +206,8 @@ jobs:
             $startInfo.Environment['CSO_DESKTOP_PID'] = [string]$PID
             $startInfo.Environment['CSO_INTERNAL_HEALTH_DATA_ROOT'] = $healthRoot
             $startInfo.Environment['CSO_INTERNAL_HEALTH_PARENT_PID'] = [string]$PID
+            $startInfo.Environment['TEMP'] = $dotnetTemp
+            $startInfo.Environment['TMP'] = $dotnetTemp
             $healthProcess = [Diagnostics.Process]::new()
             $healthProcess.StartInfo = $startInfo
             if (-not $healthProcess.Start()) {

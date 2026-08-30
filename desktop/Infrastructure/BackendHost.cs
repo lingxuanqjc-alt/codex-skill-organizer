@@ -118,6 +118,10 @@ internal sealed class BackendHost : IAsyncDisposable
                 startInfo.ArgumentList.Add("--internal-health-check");
                 startInfo.Environment["CSO_INTERNAL_HEALTH_DATA_ROOT"] = _dataRoot;
                 startInfo.Environment["CSO_INTERNAL_HEALTH_PARENT_PID"] = Environment.ProcessId.ToString();
+                // Keep Node's os.tmpdir() anchored to the same validated root that created _dataRoot.
+                var healthTemporaryRoot = Path.GetFullPath(Path.Combine(_dataRoot, "..", ".."));
+                startInfo.Environment["TEMP"] = healthTemporaryRoot;
+                startInfo.Environment["TMP"] = healthTemporaryRoot;
             }
 
             var process = Process.Start(startInfo)

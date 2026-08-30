@@ -190,6 +190,8 @@ $bundledHealthTransportInvariants = @(
     '$startInfo.Environment[''CSO_DESKTOP_PID''] = [string]$PID',
     '$startInfo.Environment[''CSO_INTERNAL_HEALTH_DATA_ROOT''] = $healthRoot',
     '$startInfo.Environment[''CSO_INTERNAL_HEALTH_PARENT_PID''] = [string]$PID',
+    '$startInfo.Environment[''TEMP''] = $dotnetTemp',
+    '$startInfo.Environment[''TMP''] = $dotnetTemp',
     '$startInfo.RedirectStandardError = $true',
     '$startInfo.ArgumentList.Add($serverPath)',
     '$startInfo.ArgumentList.Add(''--internal-health-check'')',
@@ -610,6 +612,8 @@ foreach ($healthIsolationInvariant in @(
     'startInfo.ArgumentList.Add("--internal-health-check")',
     'startInfo.Environment["CSO_INTERNAL_HEALTH_DATA_ROOT"]',
     'startInfo.Environment["CSO_INTERNAL_HEALTH_PARENT_PID"]',
+    'startInfo.Environment["TEMP"] = healthTemporaryRoot',
+    'startInfo.Environment["TMP"] = healthTemporaryRoot',
     'resolveServerDataDirectory({'
 )) {
     if (-not ($desktopAppText + $backendHostText + $serverMainText).Contains($healthIsolationInvariant)) {
