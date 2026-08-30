@@ -582,27 +582,33 @@ jobs:
             throw 'Release identity inputs are invalid.'
           }
 
-          $encodedTag = [Uri]::EscapeDataString($tag)
-          $refJson = & gh api --method GET "repos/$repository/git/ref/tags/$encodedTag"
-          if ($LASTEXITCODE -ne 0) { throw 'Unable to resolve the release tag immediately before publication.' }
-          $object = (($refJson -join [Environment]::NewLine) | ConvertFrom-Json).object
-          $resolvedCommit = $null
-          for ($depth = 0; $depth -lt 8; $depth++) {
-            $objectType = [string]$object.type
-            $objectSha = ([string]$object.sha).ToLowerInvariant()
-            if ($objectSha -notmatch '^[0-9a-f]{40}$') { throw 'The release tag contains an invalid Git object SHA.' }
-            if ($objectType -eq 'commit') {
-              $resolvedCommit = $objectSha
-              break
+          function Resolve-RemoteTagCommit {
+            param([string]$Tag, [string]$Repository)
+
+            $encodedTag = [Uri]::EscapeDataString($Tag)
+            $refJson = & gh api --method GET "repos/$Repository/git/ref/tags/$encodedTag"
+            if ($LASTEXITCODE -ne 0) { throw 'Unable to resolve the release tag.' }
+            $object = (($refJson -join [Environment]::NewLine) | ConvertFrom-Json).object
+            for ($depth = 0; $depth -lt 8; $depth++) {
+              $objectType = [string]$object.type
+              $objectSha = ([string]$object.sha).ToLowerInvariant()
+              if ($objectSha -notmatch '^[0-9a-f]{40}$') { throw 'The release tag contains an invalid Git object SHA.' }
+              if ($objectType -eq 'commit') { return $objectSha }
+              if ($objectType -ne 'tag') { throw "The release tag resolves to unsupported Git object type: $objectType" }
+              $tagJson = & gh api --method GET "repos/$Repository/git/tags/$objectSha"
+              if ($LASTEXITCODE -ne 0) { throw 'Unable to peel the annotated release tag.' }
+              $object = (($tagJson -join [Environment]::NewLine) | ConvertFrom-Json).object
             }
-            if ($objectType -ne 'tag') { throw "The release tag resolves to unsupported Git object type: $objectType" }
-            $tagJson = & gh api --method GET "repos/$repository/git/tags/$objectSha"
-            if ($LASTEXITCODE -ne 0) { throw 'Unable to peel the annotated release tag.' }
-            $object = (($tagJson -join [Environment]::NewLine) | ConvertFrom-Json).object
+            throw 'The annotated release tag chain is too deep.'
           }
-          if (-not $resolvedCommit) { throw 'The annotated release tag chain is too deep.' }
-          if ($resolvedCommit -ne $builtSourceSha) {
-            throw "Release tag moved after build: expected $builtSourceSha, found $resolvedCommit."
+
+          function Assert-RemoteTagMatchesBuild {
+            param([string]$Tag, [string]$Repository, [string]$BuiltSourceSha)
+
+            $resolvedCommit = Resolve-RemoteTagCommit -Tag $Tag -Repository $Repository
+            if ($resolvedCommit -ne $BuiltSourceSha) {
+              throw "Release tag moved after build: expected $BuiltSourceSha, found $resolvedCommit."
+            }
           }
 
           $releaseRoot = [System.IO.Path]::GetFullPath("artifacts/release/$version")
@@ -614,9 +620,34 @@ jobs:
               Select-Object -ExpandProperty FullName
           )
           if ($releaseFiles.Count -eq 0) { throw 'No release files were produced.' }
-          gh release create "${{ github.ref_name }}" @releaseFiles `
-            --repo "${{ github.repository }}" `
-            --verify-tag `
-            --title "Skill Organizer for Codex $version" `
-            --notes $notes `
-            --generate-notes
+          $releaseCreated = $false
+          try {
+            Assert-RemoteTagMatchesBuild -Tag $tag -Repository $repository -BuiltSourceSha $builtSourceSha
+            & gh release create $tag `
+              --repo $repository `
+              --verify-tag `
+              --draft `
+              --title "Skill Organizer for Codex $version" `
+              --notes $notes `
+              --generate-notes
+            if ($LASTEXITCODE -ne 0) { throw 'Unable to create the draft GitHub Release.' }
+            $releaseCreated = $true
+
+            & gh release upload $tag @releaseFiles --repo $repository
+            if ($LASTEXITCODE -ne 0) { throw 'Unable to upload every verified release asset.' }
+
+            Assert-RemoteTagMatchesBuild -Tag $tag -Repository $repository -BuiltSourceSha $builtSourceSha
+            & gh release edit $tag --repo $repository --draft=false
+            if ($LASTEXITCODE -ne 0) { throw 'Unable to publish the verified draft GitHub Release.' }
+            Assert-RemoteTagMatchesBuild -Tag $tag -Repository $repository -BuiltSourceSha $builtSourceSha
+            $releaseCreated = $false
+          } catch {
+            $publicationFailure = $_
+            if ($releaseCreated) {
+              & gh release delete $tag --repo $repository --yes
+              if ($LASTEXITCODE -ne 0) {
+                throw "Release publication failed and cleanup of the incomplete Release also failed: $($publicationFailure.Exception.Message)"
+              }
+            }
+            throw $publicationFailure
+          }

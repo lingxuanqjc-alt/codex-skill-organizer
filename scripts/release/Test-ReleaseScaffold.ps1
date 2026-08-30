@@ -110,14 +110,34 @@ foreach ($releaseIdentityInvariant in @(
     'source_sha: ${{ steps.release.outputs.source_sha }}',
     '"source_sha=$($env:GITHUB_SHA.ToLowerInvariant())" >> $env:GITHUB_OUTPUT',
     'BUILT_SOURCE_SHA: ${{ needs.build-and-smoke.outputs.source_sha }}',
-    '$refJson = & gh api --method GET "repos/$repository/git/ref/tags/$encodedTag"',
-    '$tagJson = & gh api --method GET "repos/$repository/git/tags/$objectSha"',
-    'if ($resolvedCommit -ne $builtSourceSha)',
+    '$refJson = & gh api --method GET "repos/$Repository/git/ref/tags/$encodedTag"',
+    '$tagJson = & gh api --method GET "repos/$Repository/git/tags/$objectSha"',
+    'if ($resolvedCommit -ne $BuiltSourceSha)',
     'Release tag moved after build:'
 )) {
     if (-not $releaseWorkflowText.Contains($releaseIdentityInvariant)) {
         throw "Release workflow source/tag identity gate is missing: $releaseIdentityInvariant"
     }
+}
+$tagMatchInvocation = 'Assert-RemoteTagMatchesBuild -Tag $tag -Repository $repository -BuiltSourceSha $builtSourceSha'
+if ([regex]::Matches($releaseWorkflowText, [regex]::Escape($tagMatchInvocation)).Count -ne 3) {
+    throw 'Release workflow must verify the tag before draft creation, after asset upload, and after publication.'
+}
+$draftCreateIndex = $releaseWorkflowText.IndexOf('& gh release create $tag', [StringComparison]::Ordinal)
+$firstTagCheckIndex = $releaseWorkflowText.IndexOf($tagMatchInvocation, [StringComparison]::Ordinal)
+$assetUploadIndex = $releaseWorkflowText.IndexOf('& gh release upload $tag @releaseFiles', $draftCreateIndex, [StringComparison]::Ordinal)
+$prePublishTagCheckIndex = $releaseWorkflowText.IndexOf($tagMatchInvocation, $assetUploadIndex, [StringComparison]::Ordinal)
+$publishDraftIndex = $releaseWorkflowText.IndexOf('& gh release edit $tag --repo $repository --draft=false', $prePublishTagCheckIndex, [StringComparison]::Ordinal)
+$postPublishTagCheckIndex = $releaseWorkflowText.IndexOf($tagMatchInvocation, $publishDraftIndex, [StringComparison]::Ordinal)
+$cleanupReleaseIndex = $releaseWorkflowText.IndexOf('& gh release delete $tag --repo $repository --yes', $postPublishTagCheckIndex, [StringComparison]::Ordinal)
+if ($firstTagCheckIndex -lt 0 -or $draftCreateIndex -le $firstTagCheckIndex -or $assetUploadIndex -le $draftCreateIndex -or
+    $prePublishTagCheckIndex -le $assetUploadIndex -or $publishDraftIndex -le $prePublishTagCheckIndex -or
+    $postPublishTagCheckIndex -le $publishDraftIndex -or $cleanupReleaseIndex -le $postPublishTagCheckIndex) {
+    throw 'Release workflow must upload only to a draft, reverify before and after publication, and clean an incomplete Release on failure.'
+}
+$draftCreateBlock = $releaseWorkflowText.Substring($draftCreateIndex, $assetUploadIndex - $draftCreateIndex)
+if (-not $draftCreateBlock.Contains('--draft') -or $releaseWorkflowText.Contains('--cleanup-tag')) {
+    throw 'Release workflow must create a draft and preserve the investigated tag during rollback.'
 }
 foreach ($rollbackSmokeInvariant in @(
     'Publish deterministic failing-health upgrade fixture',
