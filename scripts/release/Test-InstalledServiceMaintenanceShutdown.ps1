@@ -11,8 +11,13 @@ if ($env:OS -ne 'Windows_NT') {
 
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $probePath = Join-Path $scriptRoot 'Invoke-InstalledServiceMaintenanceShutdown.ps1'
-$nodePath = (Get-Command node -CommandType Application -ErrorAction Stop).Source
-$pwshPath = (Get-Command pwsh -CommandType Application -ErrorAction Stop).Source
+$nodeCommands = @(Get-Command node.exe -CommandType Application -ErrorAction Stop)
+$pwshCommands = @(Get-Command pwsh.exe -CommandType Application -ErrorAction Stop)
+if ($nodeCommands.Count -eq 0 -or $pwshCommands.Count -eq 0) {
+    throw 'Pinned Node.js and PowerShell 7 commands are required.'
+}
+$nodePath = [string]$nodeCommands[0].Source
+$pwshPath = [string]$pwshCommands[0].Source
 $taskkillPath = Join-Path $env:SystemRoot 'System32\taskkill.exe'
 $fixtureRoot = Join-Path ([IO.Path]::GetTempPath()) "cso-maintenance-test-$([Guid]::NewGuid().ToString('N'))"
 $utf8NoBom = [Text.UTF8Encoding]::new($false)
