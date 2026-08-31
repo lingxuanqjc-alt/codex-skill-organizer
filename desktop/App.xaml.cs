@@ -324,7 +324,33 @@ public partial class App : System.Windows.Application
         }
 
         Directory.CreateDirectory(healthRoot);
-        File.Copy(backupPath, Path.Combine(healthRoot, "organizer.db"), overwrite: false);
+        await CopyDatabaseContentAsync(
+                backupPath,
+                Path.Combine(healthRoot, "organizer.db"))
+            .ConfigureAwait(true);
+    }
+
+    private static async Task CopyDatabaseContentAsync(string sourcePath, string destinationPath)
+    {
+        const int bufferSize = 1024 * 1024;
+        await using var source = new FileStream(
+            sourcePath,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read,
+            bufferSize,
+            FileOptions.Asynchronous | FileOptions.SequentialScan);
+        await using var destination = new FileStream(
+            destinationPath,
+            FileMode.CreateNew,
+            FileAccess.Write,
+            FileShare.None,
+            bufferSize,
+            FileOptions.Asynchronous | FileOptions.WriteThrough);
+        // File.Copy preserves the source EFS attribute and fails when an encrypted
+        // upgrade backup is seeded into the intentionally unencrypted health root.
+        await source.CopyToAsync(destination, bufferSize).ConfigureAwait(true);
+        await destination.FlushAsync().ConfigureAwait(true);
     }
 
     private static string? ReadOption(IReadOnlyList<string> arguments, string option)

@@ -1336,6 +1336,10 @@ $installLayoutText = Get-Content -LiteralPath (Join-Path $repoRoot 'desktop\Infr
 $serverMainText = Get-Content -LiteralPath (Join-Path $repoRoot 'src\server\main.ts') -Raw
 foreach ($healthIsolationInvariant in @(
     'BackendHost.CreateHealthCheck(healthRoot)',
+    'await CopyDatabaseContentAsync(',
+    'FileMode.CreateNew',
+    'FileOptions.Asynchronous | FileOptions.WriteThrough',
+    'await source.CopyToAsync(destination, bufferSize)',
     'startInfo.ArgumentList.Add("--internal-health-check")',
     'startInfo.Environment["CSO_INTERNAL_HEALTH_DATA_ROOT"]',
     'startInfo.Environment["CSO_INTERNAL_HEALTH_PARENT_PID"]',
@@ -1346,6 +1350,9 @@ foreach ($healthIsolationInvariant in @(
     if (-not ($desktopAppText + $backendHostText + $serverMainText).Contains($healthIsolationInvariant)) {
         throw "Installer health check is missing its isolated internal data transport: $healthIsolationInvariant"
     }
+}
+if ($desktopAppText.Contains('File.Copy(backupPath')) {
+    throw 'Installer health seeding must copy decrypted database content instead of preserving a source EFS attribute.'
 }
 if ($backendHostText.Contains('CSO_DATA_DIR') -or $serverMainText.Contains('CSO_DATA_DIR')) {
     throw 'Release desktop and server must not restore the generic CSO_DATA_DIR override.'

@@ -15,11 +15,14 @@ based on Keep a Changelog and versions follow Semantic Versioning.
   metadata without changing logical IDs, foreign keys, or personal state.
 - Rolled back candidate disk/runtime scan caches when a later database sync is
   rejected, preventing the workbench from remaining stuck on a failed refresh.
+- Seeded installer health checks by streaming verified database content instead
+  of copying Windows EFS attributes into an unencrypted temporary directory.
 
 ### Tests
 
 - Added regressions for `openai-templates` cache upgrades, runtime-qualified
-  plugin IDs, legacy identity migration, and post-scan database rejection.
+  plugin IDs, legacy identity migration, post-scan database rejection, and the
+  EFS-safe installer health-seeding contract.
 
 ## [0.2.0] - 2026-08-30
 
