@@ -215,6 +215,11 @@ test("plugin upgrades preserve one logical ID while retaining every physical cac
     ]);
     assert.equal(result.skills.length, 2);
     assert.equal(new Set(result.skills.map((skill) => skill.skillId)).size, 1);
+    assert.deepEqual(
+      [...new Set(result.skills.map((skill) => skill.relativePath))],
+      ["skills/figma-use/skill.md"],
+      "the model and persistence path must use the same cache-version-independent identity as skillId",
+    );
     assert.deepEqual(result.skills.map((skill) => skill.pluginVersion).sort(), ["1.0.0", "2.1.0"]);
     assert.equal(new Set(result.skills.map((skill) => skill.instanceId)).size, 2);
     assert.equal(classifySkill(result.skills[0]!).categoryId, "design-media");

@@ -398,8 +398,8 @@ begin
     end;
   if not WizardSilent() then
     Result := SuppressibleMsgBox(
-      '检测到 Skill Organizer 0.1.1。升级会先创建并验证完整插件备份，再由 0.2.0 接管该插件目录；旧 JSON 分类状态不会导入或删除。是否继续安装插件？' + #13#10 +
-      'Skill Organizer 0.1.1 was found. Setup will create and verify a full plugin backup before 0.2.0 adopts that directory. Continue with the plugin component?',
+      '检测到 Skill Organizer 0.1.1。升级会先创建并验证完整插件备份，再由 {#AppVersion} 接管该插件目录；旧 JSON 分类状态不会导入或删除。是否继续安装插件？' + #13#10 +
+      'Skill Organizer 0.1.1 was found. Setup will create and verify a full plugin backup before {#AppVersion} adopts that directory. Continue with the plugin component?',
       mbConfirmation, MB_YESNO, IDNO) = IDYES;
 end;
 
@@ -1160,7 +1160,7 @@ begin
   begin
     DeleteFile(MarkerStagingPath);
     SuppressibleMsgBox(
-      '插件文件正被 Codex 使用，已保存经过校验的待处理替换。请完全重启 Codex；新任务会重试并验证 0.2.0。' + #13#10 +
+      '插件文件正被 Codex 使用，已保存经过校验的待处理替换。请完全重启 Codex；新任务会重试并验证 {#AppVersion}。' + #13#10 +
       'Codex is using the plugin files. A verified pending replacement was saved; fully restart Codex and a new task will retry it.',
       mbInformation, MB_OK, IDOK);
     Exit;

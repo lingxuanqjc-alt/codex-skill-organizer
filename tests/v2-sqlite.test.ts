@@ -150,6 +150,79 @@ test("the v4 migration treats every existing user state as touched and freezes i
   }
 });
 
+test("the schema 6 identity migration preserves logical IDs and personal state while canonicalizing plugin identity", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "cso-v6-identity-migration-"));
+  const filePath = path.join(directory, "state.sqlite");
+  const legacy = new DatabaseSync(filePath);
+  for (const migration of SQLITE_MIGRATIONS.filter((migration) => migration.version <= 6)) {
+    legacy.exec(migration.sql);
+    legacy.exec(`PRAGMA user_version = ${migration.version}`);
+  }
+  const logicalSkillId = "stable-plugin-logical-id";
+  legacy.prepare(`
+    INSERT INTO logical_skills(
+      logical_skill_id, source_type, normalized_source, package_id, plugin_id,
+      relative_skill_path, name, description, existing_category, automatic_category_id,
+      automatic_taxonomy_version, last_seen_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    logicalSkillId,
+    "codex-plugin",
+    "plugin:openai-curated-remote/openai-templates",
+    "openai-templates",
+    "openai-templates@openai-curated-remote",
+    "openai-curated-remote/openai-templates/0.1.1/skills/Artifact-Template-Analytics-Dashboard/SKILL.md",
+    "artifact-template-analytics-dashboard",
+    "Plugin identity fixture",
+    null,
+    "data-automation",
+    1,
+    NOW,
+  );
+  legacy.prepare(`
+    INSERT INTO user_skill_state(
+      logical_skill_id, classification_mode, primary_category_id, favorite, locked,
+      updated_at, automatic_classification_frozen
+    ) VALUES (?, 'manual', 'research-analysis', 1, 1, ?, 1)
+  `).run(logicalSkillId, NOW);
+  legacy.prepare(`
+    INSERT INTO tags(tag_id, display_name, created_at, updated_at)
+    VALUES ('user:reviewed', 'user:reviewed', ?, ?)
+  `).run(NOW, NOW);
+  legacy.prepare(`
+    INSERT INTO skill_tags(logical_skill_id, tag_id) VALUES (?, 'user:reviewed')
+  `).run(logicalSkillId);
+  legacy.close();
+
+  const store = await OrganizerDatabase.open(filePath, { now: () => new Date(NOW) });
+  try {
+    assert.equal(store.schemaVersion, SQLITE_SCHEMA_VERSION);
+    assert.ok(SQLITE_SCHEMA_VERSION > 6, "schema 6 needs an explicit compatibility migration");
+    const logical = store.listLogicalSkills()[0]!;
+    assert.equal(logical.logicalSkillId, logicalSkillId);
+    assert.equal(logical.pluginId, "openai-templates");
+    assert.equal(
+      logical.relativeSkillPath,
+      "skills/artifact-template-analytics-dashboard/skill.md",
+      "the migration removes cache marketplace/plugin/version components and canonicalizes case",
+    );
+    assert.deepEqual(store.getUserState(logicalSkillId), {
+      logicalSkillId,
+      classificationMode: "manual",
+      primaryCategoryId: "research-analysis",
+      tags: ["user:reviewed"],
+      favorite: true,
+      locked: true,
+      automaticClassificationFrozen: true,
+      updatedAt: NOW,
+    });
+    assert.equal((await store.listSnapshotFiles()).length, 1, "schema 6 is snapshotted before identity migration");
+  } finally {
+    await store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("taxonomy upgrades recalculate only untouched skills and every personal action freezes the current automatic category", async () => {
   await withDatabase(async (store) => {
     const ids = ["untouched", "tagged", "favorited", "locked-upgrade", "restored"];

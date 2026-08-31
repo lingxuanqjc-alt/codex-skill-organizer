@@ -62,10 +62,10 @@ Skill Organizer for Codex 是一个本地优先的 Windows 工作台，用来对
 熟人测试阶段的 0.2.x 安装包**未进行代码签名**，Windows SmartScreen 可能显示警告。先对照 `SHA256SUMS.txt` 验证哈希，再决定是否运行：
 
 ```powershell
-Get-FileHash .\SkillOrganizerForCodex-0.2.0-win-x64-setup.exe -Algorithm SHA256
+Get-FileHash .\SkillOrganizerForCodex-0.2.1-win-x64-setup.exe -Algorithm SHA256
 ```
 
-SmartScreen 提示与 Windows App Control/企业 Code Integrity 策略不是一回事。若本机策略要求发布物具有受该策略信任的 Authenticode 签名，未签名的桌面壳会被系统强制阻止；0.2.0 安装器会在复制程序文件前的健康预检中停止，并返回失败，不会尝试用捆绑的 Node.js 绕过组织策略。普通自签名也不保证被企业策略信任。此时需要使用由该设备策略信任的签名构建，或由设备管理员调整允许规则。
+SmartScreen 提示与 Windows App Control/企业 Code Integrity 策略不是一回事。若本机策略要求发布物具有受该策略信任的 Authenticode 签名，未签名的桌面壳会被系统强制阻止；安装器会在复制程序文件前的健康预检中停止，并返回失败，不会尝试用捆绑的 Node.js 绕过组织策略。普通自签名也不保证被企业策略信任。此时需要使用由该设备策略信任的签名构建，或由设备管理员调整允许规则。
 
 WebView2 缺失时的默认浏览器回退只适用于桌面可执行文件本身已获准运行的设备，不能绕过 App Control。
 

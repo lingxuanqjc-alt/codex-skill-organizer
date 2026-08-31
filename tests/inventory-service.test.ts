@@ -169,6 +169,49 @@ class CountingRuntimeAppServer extends AppServerClient {
   }
 }
 
+class PluginRuntimeAppServer extends AppServerClient {
+  constructor(
+    private readonly skillPath: string,
+    private readonly runtimePluginId: string,
+  ) {
+    super({ command: "unused" });
+  }
+
+  override get isRunning(): boolean {
+    return true;
+  }
+
+  override async start(): Promise<void> {}
+
+  override async stop(): Promise<void> {}
+
+  override async listSkills(): Promise<Array<{
+    cwd: string;
+    skills: Array<{
+      name: string;
+      description: string;
+      path: string;
+      scope: "user";
+      enabled: boolean;
+      pluginId: string;
+    }>;
+    errors: [];
+  }>> {
+    return [{
+      cwd: "fixture",
+      skills: [{
+        name: "artifact-template-analytics-dashboard",
+        description: "Plugin identity fixture",
+        path: this.skillPath,
+        scope: "user",
+        enabled: true,
+        pluginId: this.runtimePluginId,
+      }],
+      errors: [],
+    }];
+  }
+}
+
 test("clearing a selected project removes it from subsequent app-server runtime requests", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "cso-project-runtime-clear-"));
   let service: InventoryService | undefined;
@@ -246,6 +289,75 @@ test("inventory overlays runtime state and persists manual classification withou
     assert.deepEqual(operation.succeeded, [skillId]);
     assert.equal(service.snapshot.skills[0]?.runtimeEnabled, false);
     await service.close();
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("plugin cache upgrades and runtime-qualified plugin IDs preserve one logical identity", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "cso-plugin-identity-"));
+  const pluginRoot = path.join(directory, "plugin-cache");
+  const statePath = path.join(directory, "state", "organizer.db");
+  const root: RootDefinition = {
+    id: "plugins",
+    label: "Plugins",
+    path: pluginRoot,
+    kind: "plugin-cache",
+    readonly: true,
+  };
+  try {
+    const oldVersionDirectory = path.join(pluginRoot, "openai-curated-remote", "openai-templates", "0.1.1");
+    await writeSkill(oldVersionDirectory, "skills/artifact-template-analytics-dashboard", {
+      name: "artifact-template-analytics-dashboard",
+      description: "Plugin identity fixture",
+    });
+    const firstService = new InventoryService({
+      roots: [root],
+      statePath,
+      appServer: null,
+      pathLocationProbe: localPathLocationProbe,
+      watchRoot: () => fakeWatcher(),
+    });
+    const first = await firstService.initialize();
+    const logicalSkillId = first.skills[0]!.skillId;
+    await firstService.applyClassification({
+      skillIds: [logicalSkillId],
+      expectedRevision: first.revision,
+      favorite: true,
+    });
+    await firstService.close();
+
+    await rm(oldVersionDirectory, { recursive: true, force: true });
+    const newSkillPath = await writeSkill(
+      path.join(pluginRoot, "openai-curated-remote", "openai-templates", "0.1.2"),
+      "skills/artifact-template-analytics-dashboard",
+      {
+        name: "artifact-template-analytics-dashboard",
+        description: "Plugin identity fixture",
+      },
+    );
+    const secondService = new InventoryService({
+      roots: [root],
+      statePath,
+      appServer: new PluginRuntimeAppServer(
+        newSkillPath,
+        "openai-templates@openai-curated-remote",
+      ),
+      pathLocationProbe: localPathLocationProbe,
+      watchRoot: () => fakeWatcher(),
+    });
+    try {
+      const second = await secondService.initialize();
+      assert.equal(second.skills.length, 1);
+      assert.equal(second.skills[0]?.skillId, logicalSkillId, "a cache upgrade must retain the portable logical ID");
+      assert.equal(second.skills[0]?.runtimeDiscovered, true);
+      assert.equal(second.skills[0]?.favorite, true, "personal state remains attached to the stable logical ID");
+      const persisted = secondService.store.listLogicalSkills()[0]!;
+      assert.equal(persisted.pluginId, "openai-templates", "runtime namespace is instance evidence, not logical identity");
+      assert.equal(persisted.relativeSkillPath, "skills/artifact-template-analytics-dashboard/skill.md");
+    } finally {
+      await secondService.close();
+    }
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -379,6 +491,60 @@ test("watcher creation and background incremental failures remain visible in sca
     listener!("change", path.join("stable", "SKILL.md"));
     await waitUntil(() => scanCalls >= 3 && !incrementalFailure.snapshot.scanErrors.some((error) => error.message.includes("simulated incremental")));
     await incrementalFailure.close();
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("a post-scan database rejection rolls back the candidate root cache", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "cso-refresh-cache-rollback-"));
+  try {
+    const root = path.join(directory, "skills");
+    await writeSkill(root, "stable", { name: "stable", description: "Stable cached item" });
+    let listener: ((eventType: string, fileName: string | Buffer | null) => void) | null = null;
+    let scanMode: "good" | "bad-identity" | "read-failure" = "good";
+    let scanCalls = 0;
+    const service = new InventoryService({
+      roots: [{ id: "rollback", label: "Rollback", path: root, kind: "fixture" }],
+      statePath: path.join(directory, "organizer.db"),
+      appServer: null,
+      pathLocationProbe: localPathLocationProbe,
+      scanRoots: async (roots) => {
+        scanCalls += 1;
+        if (scanMode === "read-failure") throw new Error("simulated follow-up read failure");
+        const result = await scanSkillRoots(roots);
+        if (scanMode !== "bad-identity") return result;
+        return {
+          ...result,
+          skills: result.skills.map((skill) => ({
+            ...skill,
+            sourceId: "fixture:conflicting-source",
+          })),
+        };
+      },
+      watchRoot: (_rootPath, callback) => {
+        listener = callback;
+        return fakeWatcher();
+      },
+    });
+    await service.initialize();
+
+    scanMode = "bad-identity";
+    listener!("change", path.join("stable", "SKILL.md"));
+    await waitUntil(() => service.snapshot.scanErrors.some((error) => error.message.includes("身份冲突")));
+    assert.equal(service.snapshot.skills[0]?.sourceId, "fixture:rollback");
+
+    scanMode = "read-failure";
+    listener!("change", path.join("stable", "SKILL.md"));
+    await waitUntil(() => scanCalls >= 3 && service.snapshot.scanErrors.some(
+      (error) => error.message.includes("simulated follow-up read failure"),
+    ));
+    assert.ok(
+      !service.snapshot.scanErrors.some((error) => error.message.includes("身份冲突")),
+      "a later scan failure must rebuild from the last committed cache, not the rejected candidate",
+    );
+    assert.equal(service.snapshot.skills[0]?.sourceId, "fixture:rollback");
+    await service.close();
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

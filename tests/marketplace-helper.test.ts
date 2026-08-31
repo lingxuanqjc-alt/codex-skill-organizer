@@ -6,12 +6,13 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import test from "node:test";
+import { PRODUCT_VERSION } from "../src/shared/version.js";
 
 const execFileAsync = promisify(execFile);
 const repositoryRoot = path.resolve(import.meta.dirname, "..");
 const helperPath = path.join(repositoryRoot, "installer", "tools", "manage-personal-marketplace.mjs");
 const canonicalPluginRoot = path.join(repositoryRoot, "plugin", "plugins", "codex-skill-organizer");
-const version = "0.2.0";
+const version = PRODUCT_VERSION;
 
 interface Fixture {
   root: string;

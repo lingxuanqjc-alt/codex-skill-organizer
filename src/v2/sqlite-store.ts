@@ -26,12 +26,66 @@ import {
   type UndoKind,
 } from "./domain.js";
 import { assertTaxonomyPack } from "./taxonomy-pack.js";
+import {
+  canonicalLogicalIdentityText,
+  canonicalLogicalSkillPath,
+} from "../shared/logical-identity.js";
 
-export const SQLITE_SCHEMA_VERSION = 6;
+export const SQLITE_SCHEMA_VERSION = 7;
 
 export interface SqliteMigration {
   version: number;
   sql: string;
+  apply?: (database: DatabaseSync) => void;
+}
+
+interface LegacyLogicalIdentityRow {
+  logical_skill_id: string;
+  source_type: string;
+  normalized_source: string;
+  package_id: string;
+  plugin_id: string | null;
+  relative_skill_path: string;
+}
+
+function migrateSchema6LogicalIdentities(database: DatabaseSync): void {
+  const rows = database.prepare(`
+    SELECT logical_skill_id, source_type, normalized_source, package_id, plugin_id, relative_skill_path
+    FROM logical_skills
+  `).all() as unknown as LegacyLogicalIdentityRow[];
+  const update = database.prepare(`
+    UPDATE logical_skills
+    SET normalized_source = ?, package_id = ?, plugin_id = ?, relative_skill_path = ?
+    WHERE logical_skill_id = ?
+  `);
+  for (const row of rows) {
+    const normalizedSource = canonicalLogicalIdentityText(row.normalized_source);
+    const packageId = canonicalLogicalIdentityText(row.package_id);
+    let relativeSkillPath = canonicalLogicalSkillPath(row.relative_skill_path);
+    const physicalPluginSource = row.source_type === "codex-plugin"
+      && normalizedSource.startsWith("plugin:")
+      && normalizedSource.slice("plugin:".length).includes("/");
+    let pluginId = row.plugin_id === null ? null : canonicalLogicalIdentityText(row.plugin_id);
+
+    if (physicalPluginSource) {
+      const sourcePath = normalizedSource.slice("plugin:".length);
+      const sourcePrefix = `${sourcePath}/`;
+      if (relativeSkillPath.startsWith(sourcePrefix)) {
+        const versionedTail = relativeSkillPath.slice(sourcePrefix.length);
+        const versionSeparator = versionedTail.indexOf("/");
+        if (versionSeparator >= 0) relativeSkillPath = versionedTail.slice(versionSeparator + 1);
+      }
+      pluginId = packageId;
+    } else if (
+      !normalizedSource.startsWith("runtime:")
+      && !normalizedSource.startsWith("plugin:")
+      && relativeSkillPath.startsWith(`${packageId}/`)
+    ) {
+      relativeSkillPath = relativeSkillPath.slice(packageId.length + 1);
+    }
+
+    update.run(normalizedSource, packageId, pluginId, relativeSkillPath, row.logical_skill_id);
+  }
 }
 
 export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
@@ -252,6 +306,11 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
       ALTER TABLE quarantine_entries ADD COLUMN restored_path TEXT;
     `,
   },
+  {
+    version: 7,
+    sql: "",
+    apply: migrateSchema6LogicalIdentities,
+  },
 ];
 
 export class OrganizerDatabaseError extends Error {}
@@ -361,6 +420,16 @@ function parseJson<T>(value: string, context: string): T {
 
 function bool(value: unknown): boolean {
   return value === 1;
+}
+
+function canonicalLogicalSkill(skill: LogicalSkill): LogicalSkill {
+  return {
+    ...skill,
+    normalizedSource: canonicalLogicalIdentityText(skill.normalizedSource),
+    packageId: canonicalLogicalIdentityText(skill.packageId),
+    pluginId: skill.pluginId === null ? null : canonicalLogicalIdentityText(skill.pluginId),
+    relativeSkillPath: canonicalLogicalSkillPath(skill.relativeSkillPath),
+  };
 }
 
 function scrubAuditSummary(summary: OperationRecord["summary"]): OperationRecord["summary"] {
@@ -1733,6 +1802,7 @@ export class OrganizerDatabase {
       this.#database.exec("BEGIN EXCLUSIVE");
       try {
         this.#database.exec(migration.sql);
+        migration.apply?.(this.#database);
         this.#database.exec(`PRAGMA user_version = ${migration.version}`);
         this.#database.exec("COMMIT");
       } catch (error) {
@@ -1800,6 +1870,7 @@ export class OrganizerDatabase {
   }
 
   #upsertLogicalSkill(skill: LogicalSkill): void {
+    skill = canonicalLogicalSkill(skill);
     const existing = this.#database.prepare(`
       SELECT
         l.source_type,

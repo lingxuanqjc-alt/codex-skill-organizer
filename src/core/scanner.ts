@@ -14,6 +14,10 @@ import type {
   SkillDiagnostic,
   SkillScope,
 } from "../shared/types.js";
+import {
+  canonicalLogicalIdentityText,
+  canonicalLogicalSkillPath,
+} from "../shared/logical-identity.js";
 
 const MAX_DIRECTORY_ENTRIES = 250_000;
 const SCAN_METADATA_CONCURRENCY = 32;
@@ -521,11 +525,12 @@ export async function scanSkillRoots(
       options,
     );
     const fallbackName = path.basename(path.dirname(candidate.entryPath));
+    const stableRelativePath = canonicalLogicalSkillPath(source.stableRelativePath);
     const skillId = hashIdentity(
       source.scope,
-      source.sourceId.toLocaleLowerCase("en-US"),
-      source.packageId.toLocaleLowerCase("en-US"),
-      source.stableRelativePath.toLocaleLowerCase("en-US"),
+      canonicalLogicalIdentityText(source.sourceId),
+      canonicalLogicalIdentityText(source.packageId),
+      stableRelativePath,
     );
     const instanceId = hashIdentity("instance", skillId, normalizeWindowsComparable(candidate.entryPath));
     return {
@@ -547,7 +552,7 @@ export async function scanSkillRoots(
       rootId: candidate.root.id,
       rootLabel: candidate.root.label,
       absolutePath: path.resolve(candidate.entryPath),
-      relativePath: normalizeLogicalPath(candidate.relativePath),
+      relativePath: stableRelativePath,
       breadcrumb: candidate.breadcrumb,
       readonly: source.readonly,
       aliases: candidate.aliases,

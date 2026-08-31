@@ -3,6 +3,24 @@
 All notable changes to this project are documented in this file. The format is
 based on Keep a Changelog and versions follow Semantic Versioning.
 
+## [0.2.1] - 2026-08-31
+
+### Fixed
+
+- Unified logical-skill hashing and SQLite identity around one canonical,
+  cache-version-independent path so plugin upgrades remain one logical skill.
+- Prevented Codex runtime plugin namespaces from overwriting the physical
+  plugin identity used for persistence.
+- Added a schema 6 to 7 migration that canonicalizes existing plugin identity
+  metadata without changing logical IDs, foreign keys, or personal state.
+- Rolled back candidate disk/runtime scan caches when a later database sync is
+  rejected, preventing the workbench from remaining stuck on a failed refresh.
+
+### Tests
+
+- Added regressions for `openai-templates` cache upgrades, runtime-qualified
+  plugin IDs, legacy identity migration, and post-scan database rejection.
+
 ## [0.2.0] - 2026-08-30
 
 ### Added
@@ -76,4 +94,5 @@ based on Keep a Changelog and versions follow Semantic Versioning.
   credentials. Release building is read-only; a separate publish job is the
   only writer and revalidates downloaded hashes and safety notes before release.
 
+[0.2.1]: https://github.com/lingxuanqjc-alt/codex-skill-organizer/releases/tag/v0.2.1
 [0.2.0]: https://github.com/lingxuanqjc-alt/codex-skill-organizer/releases/tag/v0.2.0

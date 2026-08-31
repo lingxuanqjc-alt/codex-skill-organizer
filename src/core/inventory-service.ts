@@ -46,6 +46,10 @@ import type {
   SkillRecord,
   SkillScope,
 } from "../shared/types.js";
+import {
+  canonicalLogicalIdentityText,
+  canonicalLogicalSkillPath,
+} from "../shared/logical-identity.js";
 import { PROTOCOL_VERSION } from "../shared/version.js";
 import {
   DEFAULT_TAXONOMY_PACK,
@@ -1065,9 +1069,35 @@ export class InventoryService {
   }
 
   async #doRefresh(forceRuntime: boolean): Promise<InventorySnapshot> {
-    await this.#scanAllRoots();
-    await this.#refreshRuntime(forceRuntime);
-    return this.#rebuildSnapshot();
+    return this.#withRefreshStateRollback(async () => {
+      await this.#scanAllRoots();
+      await this.#refreshRuntime(forceRuntime);
+      return this.#rebuildSnapshot();
+    });
+  }
+
+  async #withRefreshStateRollback(
+    operation: () => Promise<InventorySnapshot>,
+  ): Promise<InventorySnapshot> {
+    const previousRootScanCache = new Map(this.#rootScanCache);
+    const previousRuntimeEntries = structuredClone(this.#runtimeEntries);
+    const previousRuntimeError = this.#runtimeError;
+    const previousBackgroundRefreshErrors = new Map(this.#backgroundRefreshErrors);
+    try {
+      return await operation();
+    } catch (error) {
+      this.#rootScanCache.clear();
+      for (const [key, value] of previousRootScanCache) this.#rootScanCache.set(key, value);
+      this.#runtimeEntries = previousRuntimeEntries;
+      this.#runtimeError = previousRuntimeError;
+      this.#backgroundRefreshErrors.clear();
+      for (const [key, value] of previousBackgroundRefreshErrors) {
+        this.#backgroundRefreshErrors.set(key, value);
+      }
+      this.#synchronizeRootScanCache();
+      this.#applyRootScanCache();
+      throw error;
+    }
   }
 
   #synchronizeRootScanCache(): void {
@@ -1194,7 +1224,6 @@ export class InventoryService {
       record.runtimeDiscovered = true;
       record.runtimeEnabled = runtime.enabled;
       record.runtimeScope = runtime.scope;
-      record.pluginId = runtime.pluginId ?? record.pluginId;
     }
     for (const record of instanceRecords) {
       if (!record.runtimeDiscovered) record.diagnostics.push({ code: "CACHE_ONLY", message: "物理存在，但当前 Codex 运行时未列出" });
@@ -1215,10 +1244,12 @@ export class InventoryService {
       logicalSkills.push({
         logicalSkillId,
         sourceType: sourceType(representative),
-        normalizedSource: representative.sourceId.normalize("NFC").toLocaleLowerCase("en-US"),
-        packageId: representative.packageId.normalize("NFC"),
-        pluginId: representative.pluginId,
-        relativeSkillPath: representative.relativePath,
+        normalizedSource: canonicalLogicalIdentityText(representative.sourceId),
+        packageId: canonicalLogicalIdentityText(representative.packageId),
+        pluginId: representative.pluginId === null
+          ? null
+          : canonicalLogicalIdentityText(representative.pluginId),
+        relativeSkillPath: canonicalLogicalSkillPath(representative.relativePath),
         name: representative.name,
         description: representative.description,
         existingCategory: representative.existingCategory ?? null,
@@ -1526,11 +1557,11 @@ export class InventoryService {
       const refreshRuntime = this.#pendingRuntimeRefresh;
       this.#pendingRootRefreshes.clear();
       this.#pendingRuntimeRefresh = false;
-      void this.#enqueueRefresh(async () => {
+      void this.#enqueueRefresh(() => this.#withRefreshStateRollback(async () => {
         if (rootKeys.size > 0) await this.#scanChangedRoots(rootKeys);
         if (refreshRuntime) await this.#refreshRuntime(true);
         return this.#rebuildSnapshot();
-      }).catch((error) => {
+      })).catch((error) => {
         const message = error instanceof Error ? error.message : String(error);
         const affected = rootKeys.size > 0
           ? this.roots.filter((root) => rootKeys.has(rootCacheKey(root)))
