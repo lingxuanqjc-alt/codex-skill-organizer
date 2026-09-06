@@ -37,7 +37,7 @@
     "@modelcontextprotocol/ext-apps": "1.7.5",
     "@modelcontextprotocol/sdk": "1.30.0",
     "yaml": "2.9.0",
-    "zod": "4.5.2"
+    "zod": "4.5.4"
   },
   "devDependencies": {
     "@playwright/test": "1.62.1",
