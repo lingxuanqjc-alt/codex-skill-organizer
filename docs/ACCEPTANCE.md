@@ -14,6 +14,8 @@
 
 [演示与复现说明](media/README.md) · [产品取舍案例](PROJECT-CASE.md) · [已存在的 v0.2.1 发布物](https://github.com/lingxuanqjc-alt/codex-skill-organizer/releases/tag/v0.2.1)
 
+远程验收补记：展示改动 [PR #11](https://github.com/lingxuanqjc-alt/codex-skill-organizer/pull/11) 已合并。[CI run 34193371031](https://github.com/lingxuanqjc-alt/codex-skill-organizer/actions/runs/34193371031) 对 head `c33894eb81d2f403131aa616e147bd39f3473518` 的三项检查均通过：`Typecheck, tests, bundles, plugin, release contracts`、`Workbench browser contract`、`Windows desktop shell`。应用源码基准仍为上面的 `039f7f4`；这份结果仅对应被测 head，后续提交以各自的 Actions 结果为准。
+
 本轮没有重跑完整安装/升级/卸载、WebView2、托盘或真实 Codex 会话验收，也没有重新生成发布资产。下面保留 2026-08-30 的历史记录，其中旧版本号、计数、未勾选发布门禁和旧审计结果只描述当时的状态；当前结果以上表为准。
 
 <details>
