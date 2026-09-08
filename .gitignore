@@ -1,6 +1,7 @@
 node_modules/
 dist/
 playwright-report/
+.playwright-cli/
 test-results/
 output/
 artifacts/

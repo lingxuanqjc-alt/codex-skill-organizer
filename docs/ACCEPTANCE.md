@@ -1,3 +1,24 @@
+# Skill Organizer for Codex 验收记录
+
+## 当前检查摘要：2026-09-08 / 0.2.1
+
+应用源码基准：[`039f7f4141eceed3b54fdf7c35cffa74808d83a5`](https://github.com/lingxuanqjc-alt/codex-skill-organizer/commit/039f7f4141eceed3b54fdf7c35cffa74808d83a5)（PR #7）。本轮仅增加展示文档、媒体和隔离演示脚本，应用源码与 CI 未改变。环境：Windows x64、Node.js `v24.18.0`；本地重新验证结果如下。
+
+| 检查 | 本轮结果 | 证据边界 |
+| --- | --- | --- |
+| `npm run check` | 版本、安全门禁、类型检查、生产构建通过；209 项测试，206 通过、3 跳过、0 失败 | 3 项分别为磁盘未开启 DOS 8.3、未启用显式 Windows health probe、未启用显式 Windows drive probe；跳过不计通过 |
+| `pwsh -NoProfile -File scripts/release/Test-ReleaseScaffold.ps1` | 通过 | 静态与 fixture 发布契约，不代表本轮生成或安装了新发布物 |
+| `npm audit --omit=dev --audit-level=high` | high/critical 门槛通过；存在 1 个 moderate 依赖漏洞项（`qs`） | 不能写成“0 漏洞”；[相关公告一](https://github.com/advisories/GHSA-x5fp-wj9c-mxmx)、[公告二](https://github.com/advisories/GHSA-4mjr-xmp4-gh2g)。本轮未升级依赖 |
+| 真实网页交互，隔离 Chromium | 概览、搜索、收藏、重扫保留收藏、分类筛选与双实例显示均已复核；控制台 0 错误 / 0 警告 | 仅 12 个逻辑 Skill / 13 个物理实例的合成清单；不连接用户 Codex |
+| 展示媒体 | 3 张 1440 × 1000 PNG；6 帧、15 秒 GIF 已检查 | GIF 是操作截图顺序播放；不冒充逐帧录屏或用户规模 |
+
+[演示与复现说明](media/README.md) · [产品取舍案例](PROJECT-CASE.md) · [已存在的 v0.2.1 发布物](https://github.com/lingxuanqjc-alt/codex-skill-organizer/releases/tag/v0.2.1)
+
+本轮没有重跑完整安装/升级/卸载、WebView2、托盘或真实 Codex 会话验收，也没有重新生成发布资产。下面保留 2026-08-30 的历史记录，其中旧版本号、计数、未勾选发布门禁和旧审计结果只描述当时的状态；当前结果以上表为准。
+
+<details>
+<summary>历史记录：0.2.0（2026-08-30，原始结果保留）</summary>
+
 # Skill Organizer for Codex 0.2.0 验收记录
 
 验收基准日期：2026-08-30
@@ -79,3 +100,5 @@
 
 - 父工作区中与本仓库无关的 `disable-global-mcp.patch` 必须保持不变，且不会纳入本仓库。
 - 除用户在工作台明确确认的隔离单元外，Organizer 不移动、改写或删除第三方 skill。
+
+</details>

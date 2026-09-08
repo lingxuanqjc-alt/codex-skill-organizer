@@ -1,8 +1,20 @@
 # Skill Organizer for Codex
 
-Skill Organizer for Codex 是一个本地优先的 Windows 工作台，用来对每台电脑上不同的 Codex skill 清单进行**分类、整理和安全管理**。它会在启动时全量扫描，并对后续文件变化做去抖增量重扫，也可手工强制重扫；不要求其他人的目录和作者的电脑一致，也不会把第三方 `SKILL.md` 改写成某种专有格式。
+**Skill 分散在不同目录、插件版本又不断变化时，怎样找到需要的工具，并保留自己整理过的分类和收藏？**
+
+这是一个本地优先的 Windows 工作台：扫描和聚合 Codex Skill，支持分类、搜索、标签和收藏；需要启停或隔离时，再确认具体实例与影响。个人整理存入独立 SQLite，扫描不会改写第三方 `SKILL.md`。
+
+[下载 Windows 0.2.1](https://github.com/lingxuanqjc-alt/codex-skill-organizer/releases/tag/v0.2.1) · [15 秒操作演示](docs/media/README.md) · [项目案例：身份稳定与升级取舍](docs/PROJECT-CASE.md) · [当前验证与限制](docs/ACCEPTANCE.md) · [English](#english)
+
+![真实工作台：合成 Skill 清单，管理模式关闭](docs/media/workbench-inventory.png)
+
+*合成示例：12 个逻辑 Skill / 13 个物理实例。截图来自实际运行的扫描器、数据库和网页界面；未连接个人 Codex 运行时，不代表用户数量或使用规模。*
 
 > 本项目是独立的社区项目，不是 OpenAI 官方产品，也不代表 OpenAI。
+
+**开始使用：** Release 提供当前用户安装器和便携 ZIP；先核对同页 `SHA256SUMS.txt`。适用于 Windows 10/11 x64，安装包包含 Node.js，无需自行安装。当前发布物未进行代码签名；安装与设备策略限制见下方[安装与升级](#安装与升级)。
+
+**阅读实现：** [身份与实例回归测试](tests/inventory-service.test.ts)、[SQLite 迁移测试](tests/v2-sqlite.test.ts)、[CI 工作流](.github/workflows/ci.yml)。项目案例说明问题、方案取舍与验证依据。
 
 ## 适用环境
 
@@ -121,3 +133,9 @@ npm run build:release
 ## 许可证
 
 [MIT](LICENSE) — Copyright (c) 2026 lx
+
+## English
+
+A local-first Windows workbench for organizing Codex skills across folders and plugin versions. Search, classify, tag and favorite logical skills while keeping physical instances separate for explicit management actions. Personal state lives in SQLite; scanning does not rewrite third-party `SKILL.md` files.
+
+[Download 0.2.1](https://github.com/lingxuanqjc-alt/codex-skill-organizer/releases/tag/v0.2.1) · [Synthetic demo](docs/media/README.md) · [Case study](docs/PROJECT-CASE.md) · [Verification and limitations](docs/ACCEPTANCE.md). Windows 10/11 x64; unsigned community release. Independent project, not an official OpenAI product.
